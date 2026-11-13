@@ -312,3 +312,29 @@ async fn open_buffer_previews_scroll_without_changing_the_editor_view() -> anyho
     assert_eq!(std::fs::read_to_string(path)?, lines(100));
     Ok(())
 }
+
+#[tokio::test]
+async fn mouse_wheel_over_results_moves_the_selection_without_wrapping() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let locations = (0..5)
+        .map(|i| location(dir.path().join(format!("file-{i}.txt")), None))
+        .collect();
+    let mut fixture = Fixture::new(locations).await?;
+    fixture.draw(100, 20);
+    let mut wheel = |kind, row| {
+        fixture.event(Event::Mouse(MouseEvent {
+            column: 20,
+            row,
+            kind,
+            modifiers: KeyModifiers::empty(),
+        }));
+        fixture.picker.results.cursor
+    };
+    // The prompt is not part of the results.
+    assert_eq!(wheel(MouseEventKind::ScrollDown, 1), 0);
+    assert_eq!(wheel(MouseEventKind::ScrollDown, 5), 3);
+    assert_eq!(wheel(MouseEventKind::ScrollDown, 5), 4);
+    assert_eq!(wheel(MouseEventKind::ScrollUp, 5), 1);
+    assert_eq!(wheel(MouseEventKind::ScrollUp, 5), 0);
+    Ok(())
+}

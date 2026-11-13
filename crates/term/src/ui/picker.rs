@@ -312,6 +312,8 @@ pub struct Picker<T: 'static + Send + Sync, D: 'static> {
     /// Whether to show the preview panel (default true)
     show_preview: bool,
     preview_area: Option<Rect>,
+    /// Result rows as last rendered, excluding the header.
+    list_area: Option<Rect>,
     /// Constraints for tabular formatting
     widths: Vec<Constraint>,
 
@@ -459,6 +461,7 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
             truncate_start: true,
             show_preview: true,
             preview_area: None,
+            list_area: None,
             callback_fn: Box::new(callback_fn),
             on_close: None,
             default_action: Action::Replace,
@@ -1206,6 +1209,7 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
 
         let mut result_rows = inner.clip_top(self.header_height());
         self.completion_height = result_rows.height;
+        self.list_area = Some(result_rows);
         let rows = u32::from(result_rows.height).max(1);
         self.results.offset = visible_offset(
             self.results.cursor,
@@ -1900,25 +1904,45 @@ impl<I: 'static + Send + Sync, D: 'static + Send + Sync> Component for Picker<I,
             Event::Resize(..) => {
                 self.rendered_results = None;
                 self.preview_area = None;
+                self.list_area = None;
                 return EventResult::Consumed(None);
             }
             // Picker is a modal and should consume mouse events so clicks don't fall
             // through to the editor underneath
             Event::Mouse(mouse) => {
                 let position = Position::new(mouse.column, mouse.row);
+                let down = match mouse.kind {
+                    MouseEventKind::ScrollDown => Some(true),
+                    MouseEventKind::ScrollUp => Some(false),
+                    _ => None,
+                };
                 if self
                     .preview_area
                     .is_some_and(|area| area.contains(position))
                 {
-                    let action = match mouse.kind {
-                        MouseEventKind::ScrollDown => Some(PickerAction::PreviewScrollDown),
-                        MouseEventKind::ScrollUp => Some(PickerAction::PreviewScrollUp),
-                        _ => None,
-                    };
-                    if let Some(action) = action {
+                    if let Some(down) = down {
+                        let action = if down {
+                            PickerAction::PreviewScrollDown
+                        } else {
+                            PickerAction::PreviewScrollUp
+                        };
                         self.rendered_results = None;
                         return self.execute_actions(&[action], ctx);
                     }
+                } else if let Some(down) = down
+                    && self.list_area.is_some_and(|area| area.contains(position))
+                {
+                    // The wheel stops at either end instead of wrapping like the keys do.
+                    let cursor = self.results.cursor;
+                    let last = self.results.matcher.snapshot().matched_item_count().max(1) - 1;
+                    let (action, room) = if down {
+                        (PickerAction::MoveDown, last.saturating_sub(cursor))
+                    } else {
+                        (PickerAction::MoveUp, cursor)
+                    };
+                    let lines = ctx.editor.config().scroll.wheel_lines.unsigned_abs() as u32;
+                    self.rendered_results = None;
+                    return self.execute_actions(&vec![action; lines.min(room) as usize], ctx);
                 } else if mouse.kind == MouseEventKind::Down(MouseButton::Left)
                     && let Some((area, first)) = self.rendered_results
                     && area.contains(position)
