@@ -549,8 +549,12 @@ Git repository, Jujutsu takes precedence.
   or title of its parent, or the number of parents it merges.
 - `:vcs-changes` lists the files changed by the working-copy commit. Jujutsu has
   no staging area, so every change is unstaged and new files appear as untracked.
-- Markers refresh when another `jj` command changes the working-copy commit.
+- Blame annotates the same parents. The `{commit}` placeholder shows the change ID,
+  and the details popup shows both the change ID and the commit ID, with their
+  shortest unique prefixes emphasized; its copy action copies the change ID.
+  `blame.ignoreRevsFile` does not apply.
+- Markers and blame refresh when another `jj` command changes the working-copy commit.
 
 Jujutsu support requires a [trusted workspace](./workspace-trust.md#jujutsu).
-Staging, stashes, branches, history, and blame remain Git commands: they work in
+Staging, stashes, branches, and history remain Git commands: they work in
 a workspace that is also a Git repository and operate on the Git repository directly.
