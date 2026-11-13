@@ -544,7 +544,8 @@ To see the whole file for either side, run `:vcs-conflict-source current` or
 version. Each version opens in a read-only split. Close it with `:q`.
 
 Language servers read conflict markers as broken code. Diagnostics inside an
-unresolved conflict are hidden until you resolve it.
+unresolved conflict are hidden until you resolve it, and its text keeps its
+syntax colors instead of the server's semantic highlighting.
 
 ### Word differences
 
