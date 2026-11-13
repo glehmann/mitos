@@ -225,9 +225,12 @@
 | `ui.text.symlink` | Symlink names in prompt completion |
 | `ui.virtual` | Fallback for virtual text. |
 | `ui.virtual.code-lens` | End-of-line code lens labels; falls back to `ui.virtual.inlay-hint` |
+| `ui.virtual.conflict.added` | Words a conflict section adds to the one it is compared with; falls back to `diff.plus.word` |
 | `ui.virtual.conflict.base` | Original version in a three-way conflict |
 | `ui.virtual.conflict.current` | Current changes, opening marker, and label |
 | `ui.virtual.conflict.incoming` | Incoming changes, closing marker, and label |
+| `ui.virtual.conflict.marker` | Background of every conflict marker line; defaults to the color of the section the marker belongs to |
+| `ui.virtual.conflict.removed` | Words of the original version missing from the conflict section it is compared with; falls back to `diff.minus.word` |
 | `ui.virtual.debug-value` | Runtime values beside source while debugging; falls back to `ui.virtual.inlay-hint` |
 | `ui.virtual.fold` | Ellipsis representing folded text |
 | `ui.virtual.indent-guide` | Vertical indent width guides |

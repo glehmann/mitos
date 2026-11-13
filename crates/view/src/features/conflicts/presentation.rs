@@ -37,6 +37,12 @@ impl ConflictSide {
             _ => "ui.text.inactive",
         }
     }
+    /// Marker lines and their labels use one style when the theme has a marker scope.
+    fn marker_highlight(self, theme: &theme::Theme) -> Option<Highlight> {
+        theme
+            .find_highlight_exact("ui.virtual.conflict.marker")
+            .or_else(|| self.highlight(theme))
+    }
     fn highlight(self, theme: &theme::Theme) -> Option<Highlight> {
         theme
             .find_highlight_exact(self.scope())
@@ -240,6 +246,12 @@ impl ConflictPresentation {
                 .map_or(0, |region| region.removed_lines)
     }
 
+    pub fn is_marker_line(&self, line: usize) -> bool {
+        self.markers
+            .binary_search_by_key(&line, |marker| marker.line)
+            .is_ok()
+    }
+
     pub fn active(&self) -> bool {
         !self.regions.is_empty() || self.error.is_some()
     }
@@ -398,7 +410,8 @@ impl<'a> crate::document::PresentedDocument<'a> {
             .filter_map(|marker| {
                 let highlight = model
                     .side_at_line(self.text(), marker.line)
-                    .and_then(|side| side.highlight(theme))
+                    .and_then(|side| side.marker_highlight(theme))
+                    .or_else(|| theme.find_highlight_exact("ui.virtual.conflict.marker"))
                     .or_else(|| theme.find_highlight_exact("ui.text"))?;
                 Some((highlight, marker.range.clone()))
             })
@@ -412,8 +425,12 @@ impl<'a> crate::document::PresentedDocument<'a> {
         visible: Range<usize>,
         theme: &theme::Theme,
     ) -> Option<OverlayHighlights> {
-        let removed = theme.find_highlight("diff.minus.word")?;
-        let added = theme.find_highlight("diff.plus.word")?;
+        let removed = theme
+            .find_highlight_exact("ui.virtual.conflict.removed")
+            .or_else(|| theme.find_highlight("diff.minus.word"))?;
+        let added = theme
+            .find_highlight_exact("ui.virtual.conflict.added")
+            .or_else(|| theme.find_highlight("diff.plus.word"))?;
         let model = self.conflict_presentation();
         let text = self.text();
         let visible = text.char_to_byte_idx(visible.start)..text.char_to_byte_idx(visible.end);
@@ -466,7 +483,7 @@ impl<'a> crate::document::PresentedDocument<'a> {
             .iter()
             .zip([ConflictSide::Current, ConflictSide::End])
         {
-            let highlight = theme.and_then(|theme| side.highlight(theme));
+            let highlight = theme.and_then(|theme| side.marker_highlight(theme));
             annotations.add_inline_annotations(labels, highlight);
         }
     }
