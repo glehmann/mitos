@@ -1,9 +1,11 @@
 //! Text comparison independent of repository services and task scheduling.
 
 mod line_cache;
+mod refine;
 mod review;
 mod syntax;
 mod transaction;
+pub use refine::refine;
 pub use review::{Review, ReviewLine, ReviewLineKind, MAX_REVIEW_BYTES, MAX_REVIEW_LINES};
 
 use editor_core::{Rope, RopeSlice};

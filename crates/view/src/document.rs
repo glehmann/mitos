@@ -198,6 +198,9 @@ pub struct Document {
     pub(crate) document_links: DocumentLinks,
     pub(crate) conflicts:
         std::sync::OnceLock<Arc<crate::features::conflicts::ConflictPresentation>>,
+    /// Comparison chosen for a conflict, keyed by the character offset of its
+    /// opening marker. `None` hides its word differences.
+    pub(crate) conflict_comparisons: HashMap<usize, Option<usize>>,
     pub(crate) document_symbols: DocumentSymbols,
     pub(crate) workspace_symbols: event::TaskController,
     source: DocumentSource,
@@ -323,6 +326,7 @@ impl Document {
             version_control_head: None,
             focused_at: std::time::Instant::now(),
             conflicts: Default::default(),
+            conflict_comparisons: HashMap::new(),
             document_links: Default::default(),
             document_colors: Default::default(),
             code_lenses: Default::default(),

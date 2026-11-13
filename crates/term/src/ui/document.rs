@@ -57,6 +57,13 @@ pub(crate) fn render_document_with_styles(
                 theme,
             ),
         );
+        // Selections, matches, and diagnostics stay visible above word differences.
+        if let Some(differences) = doc.conflict_difference_highlights(
+            layout.text.byte_to_char_idx(visible.start)..layout.text.byte_to_char_idx(visible.end),
+            theme,
+        ) {
+            overlay_highlights.insert(1, differences);
+        }
     }
     let config = doc.source().config.load();
     let mut renderer = TextRenderer::new(

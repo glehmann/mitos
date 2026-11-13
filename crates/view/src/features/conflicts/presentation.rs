@@ -1,11 +1,14 @@
 //! A document-owned interpretation shared by conflict commands and presentation.
 
-use std::{ops::Range, sync::LazyLock};
+use std::{
+    ops::Range,
+    sync::{LazyLock, OnceLock},
+};
 
 use crate::{Document, ViewId};
 use editor_core::{
     highlight::{Highlight, OverlayHighlights},
-    ChangeSet, Rope, RopeSlice,
+    Assoc, ChangeSet, Rope, RopeSlice,
 };
 use stdx::rope::{Regex, RopeExt as _, RopeSliceExt as _};
 use text_layout::text_annotations::{InlineAnnotation, TextAnnotations};
@@ -55,6 +58,14 @@ struct ConflictLineNumbers {
     removed_lines: usize,
 }
 
+/// Word-level differences between two sections, as character ranges.
+struct Differences {
+    removed: Vec<Range<usize>>,
+    added: Vec<Range<usize>>,
+    /// Neither of two sides is the original: both only add to the other.
+    sides: bool,
+}
+
 #[derive(Default)]
 pub struct ConflictPresentation {
     pub regions: Vec<Conflict>,
@@ -62,6 +73,8 @@ pub struct ConflictPresentation {
     pub error: Option<String>,
     line_numbers: Vec<ConflictLineNumbers>,
     labels: [Vec<InlineAnnotation>; 2],
+    /// Computed for each region when it first becomes visible.
+    differences: Vec<OnceLock<Option<Differences>>>,
 }
 
 // The parser validates line boundaries and suffixes. This deliberately broad
@@ -142,12 +155,41 @@ impl ConflictPresentation {
             }
         }
         Self {
+            differences: regions.iter().map(|_| OnceLock::new()).collect(),
             regions,
             markers,
             error: None,
             line_numbers,
             labels,
         }
+    }
+
+    /// Differences for `comparison`, an index into [`Conflict::comparisons`].
+    /// A region keeps its first answer, so changing its comparison requires a
+    /// new presentation.
+    fn differences(&self, text: &Rope, region: usize, comparison: usize) -> Option<&Differences> {
+        self.differences[region]
+            .get_or_init(|| {
+                let conflict = &self.regions[region];
+                let &(left, right) = conflict.comparisons().get(comparison)?;
+                let (left, right) = (&conflict.sections[left], &conflict.sections[right]);
+                let (removed, added) =
+                    text_diff::refine(text, left.content.clone(), right.content.clone());
+                let chars = |ranges: Vec<Range<usize>>| {
+                    ranges
+                        .into_iter()
+                        .map(|range| {
+                            text.byte_to_char_idx(range.start)..text.byte_to_char_idx(range.end)
+                        })
+                        .collect()
+                };
+                Some(Differences {
+                    removed: chars(removed),
+                    added: chars(added),
+                    sides: left.kind == right.kind,
+                })
+            })
+            .as_ref()
     }
 
     /// Zero-based gutter number. Conflict sections share their first number;
@@ -241,6 +283,11 @@ fn git_format(region: &Conflict) -> bool {
 
 impl Document {
     pub(crate) fn invalidate_conflicts(&mut self, before: &Rope, changes: &ChangeSet) {
+        // Conflicts keep their comparison while text before them changes.
+        self.conflict_comparisons = std::mem::take(&mut self.conflict_comparisons)
+            .into_iter()
+            .map(|(start, comparison)| (changes.map_pos(start, Assoc::After), comparison))
+            .collect();
         // An empty presentation has no positions to remap. Recheck only affected
         // lines, including joins and edits to marker suffixes or line endings.
         let keep_empty = self.conflicts.get().is_some_and(|model| {
@@ -273,6 +320,11 @@ impl Document {
                 }
             })
         })
+    }
+
+    /// The comparison of a conflict whose word differences were never cycled.
+    pub(crate) fn default_conflict_comparison(&self) -> Option<usize> {
+        self.config.load().conflicts.word_diff.then_some(0)
     }
 
     pub fn conflict_marker_line_number_hidden(&self, view: ViewId, line: usize) -> bool {
@@ -329,6 +381,52 @@ impl<'a> crate::document::PresentedDocument<'a> {
             })
             .collect();
         OverlayHighlights::Heterogenous { highlights }
+    }
+
+    /// Emphasize what the compared sections of each visible conflict do not share.
+    pub fn conflict_difference_highlights(
+        &self,
+        visible: Range<usize>,
+        theme: &theme::Theme,
+    ) -> Option<OverlayHighlights> {
+        let removed = theme.find_highlight("diff.minus.word")?;
+        let added = theme.find_highlight("diff.plus.word")?;
+        let model = self.conflict_presentation();
+        let text = self.text();
+        let visible = text.char_to_byte_idx(visible.start)..text.char_to_byte_idx(visible.end);
+        let first = model
+            .regions
+            .partition_point(|region| region.whole.end <= visible.start);
+        let mut highlights = Vec::new();
+        for (index, region) in model.regions.iter().enumerate().skip(first) {
+            if region.whole.start >= visible.end {
+                break;
+            }
+            // A proposed text has no positions in common with the source's choices.
+            let default = self.source().default_conflict_comparison();
+            let comparison = if self.is_live() {
+                let start = text.byte_to_char_idx(region.whole.start);
+                let chosen = self.source().conflict_comparisons.get(&start);
+                chosen.copied().unwrap_or(default)
+            } else {
+                default
+            };
+            let Some(differences) =
+                comparison.and_then(|comparison| model.differences(text, index, comparison))
+            else {
+                continue;
+            };
+            let left = if differences.sides { added } else { removed };
+            highlights.extend(
+                differences
+                    .removed
+                    .iter()
+                    .map(|range| (left, range.clone())),
+            );
+            highlights.extend(differences.added.iter().map(|range| (added, range.clone())));
+        }
+        highlights.sort_unstable_by_key(|(_, range)| range.start);
+        (!highlights.is_empty()).then_some(OverlayHighlights::Heterogenous { highlights })
     }
 
     pub fn annotate_conflicts(
@@ -639,6 +737,73 @@ mod tests {
             assert_eq!(model.line_number(physical), displayed, "line {physical}");
         }
         assert_eq!(model.line_count(14), 4);
+    }
+
+    #[test]
+    fn word_differences_follow_the_chosen_comparison_across_edits() {
+        let theme = theme::Theme::from(
+            toml::from_str::<toml::Value>(
+                r##"
+            "diff.minus.word" = "#ff0000"
+            "diff.plus.word" = "#00ff00"
+        "##,
+            )
+            .unwrap(),
+        );
+        let removed = theme.find_highlight_exact("diff.minus.word").unwrap();
+        let added = theme.find_highlight_exact("diff.plus.word").unwrap();
+        let source = "préfix\n<<<<<<< a\nlet x = 1;\n||||||| base\nlet x = 0;\n=======\nlet y = 0;\n>>>>>>> b\n";
+        let mut doc = document(source);
+        let differences = |doc: &Document| {
+            let text = doc.text();
+            let highlights = crate::document::PresentedDocument::from(doc)
+                .conflict_difference_highlights(0..text.len_chars(), &theme);
+            let Some(OverlayHighlights::Heterogenous { highlights }) = highlights else {
+                return Vec::new();
+            };
+            highlights
+                .into_iter()
+                .map(|(highlight, range)| {
+                    let line = text.char_to_line_idx(range.start);
+                    (
+                        line,
+                        text.slice_chars(range).to_string(),
+                        highlight == added,
+                    )
+                })
+                .collect()
+        };
+        // By default, what the first side changed from the base.
+        assert_eq!(
+            differences(&doc),
+            [(2, "1".to_owned(), true), (4, "0".to_owned(), false)]
+        );
+        assert_ne!(removed, added);
+        // Two sides have no original: both are additions.
+        doc.conflict_comparisons.insert(7, Some(2));
+        doc.conflicts.take();
+        let sides = [
+            (2, "x".to_owned(), true),
+            (2, "1".to_owned(), true),
+            (6, "y".to_owned(), true),
+            (6, "0".to_owned(), true),
+        ];
+        assert_eq!(differences(&doc), sides);
+        edit(&mut doc, [(0, 0, Some("new\n".into()))].into_iter());
+        assert_eq!(doc.conflict_comparisons.get(&11), Some(&Some(2)));
+        assert_eq!(
+            differences(&doc),
+            sides.map(|(line, text, added)| (line + 1, text, added))
+        );
+        doc.conflict_comparisons.insert(11, None);
+        doc.conflicts.take();
+        assert!(differences(&doc).is_empty());
+        // Nothing outside the visible range is compared.
+        let model = doc.conflict_presentation();
+        assert!(model.differences[0].get().is_none());
+        assert!(crate::document::PresentedDocument::from(&doc)
+            .conflict_difference_highlights(0..3, &theme)
+            .is_none());
     }
 
     #[test]

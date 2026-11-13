@@ -83,6 +83,31 @@ impl Conflict {
         })
     }
 
+    /// Pairs of section indices worth comparing, most useful first: what each
+    /// side changed from the base next to it, then how the sides differ from
+    /// each other. A base is always the first of its pair.
+    pub fn comparisons(&self) -> Vec<(usize, usize)> {
+        let kind = |index: usize| self.sections[index].kind;
+        let mut pairs: Vec<_> = (1..self.sections.len())
+            .filter(|&index| index == 1 || kind(index - 1) == SectionKind::Base)
+            .map(|index| match kind(index) {
+                SectionKind::Base => (index, index - 1),
+                SectionKind::Side => (index - 1, index),
+            })
+            .collect();
+        let sides: Vec<_> = (0..self.sections.len())
+            .filter(|&index| kind(index) == SectionKind::Side)
+            .collect();
+        for (position, &left) in sides.iter().enumerate() {
+            for &right in &sides[position + 1..] {
+                if !pairs.contains(&(left, right)) {
+                    pairs.push((left, right));
+                }
+            }
+        }
+        pairs
+    }
+
     /// Content ranges that replace the conflict, or `None` if the choice is absent.
     pub fn resolution(&self, choice: Resolution) -> Option<Vec<Range<usize>>> {
         let section = match choice {
@@ -499,6 +524,37 @@ three
             "<<<<<<< c\n------- base\nold\n>>>>>>> end\n",
         ] {
             assert!(parse(text).is_err(), "{text}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn comparisons_start_with_each_side_against_its_base() -> Result<()> {
+        let jujutsu = |sections: &[&str]| {
+            let body: String = sections
+                .iter()
+                .map(|marker| format!("{marker}\ntext\n"))
+                .collect();
+            format!("<<<<<<< c\n{body}>>>>>>> end\n")
+        };
+        let (side, base) = ("+++++++", "-------");
+        for (text, expected) in [
+            (
+                "<<<<<<< a\nours\n=======\ntheirs\n>>>>>>> b\n".to_owned(),
+                &[(0, 1)][..],
+            ),
+            (
+                "<<<<<<< a\nours\n||||||| base\nold\n=======\ntheirs\n>>>>>>> b\n".to_owned(),
+                &[(1, 0), (1, 2), (0, 2)],
+            ),
+            (jujutsu(&[side]), &[]),
+            (jujutsu(&[side, base, side]), &[(1, 0), (1, 2), (0, 2)]),
+            (
+                jujutsu(&[side, base, side, base, side]),
+                &[(1, 0), (1, 2), (3, 4), (0, 2), (0, 4), (2, 4)],
+            ),
+        ] {
+            assert_eq!(parse(&text)?[0].comparisons(), expected, "{text}");
         }
         Ok(())
     }

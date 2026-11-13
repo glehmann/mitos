@@ -543,6 +543,27 @@ To see the whole file for either side, run `:vcs-conflict-source current` or
 `:vcs-conflict-source incoming`. Use `:vcs-conflict-source base` to see the original
 version. Each version opens in a read-only split. Close it with `:q`.
 
+### Word differences
+
+Inside a conflict, Mitos highlights the words that differ between two of its
+sections. It starts with what the current side changed from the original text
+when the conflict includes it, and otherwise with how the two sides differ.
+Text only in the original uses the theme's `diff.minus.word` style; text only in
+a side uses `diff.plus.word`.
+
+Run `:vcs-conflict-compare` with the cursor in a conflict to compare the next
+pair of sections: each side against the original, then the sides against each
+other. After the last pair the highlights are hidden, and the command starts
+over. The status line names the sections being compared.
+
+Set `editor.conflicts.word-diff` to `false` to keep the highlights hidden until
+`:vcs-conflict-compare` asks for them:
+
+```toml
+[editor.conflicts]
+word-diff = false
+```
+
 ### Jujutsu conflicts
 
 Mitos also reads conflicts written by Jujutsu's `snapshot` marker style, which

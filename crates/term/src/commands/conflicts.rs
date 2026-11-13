@@ -45,6 +45,10 @@ pub(super) fn resolve(cx: &mut compositor::Context, args: Args) -> Result<()> {
     Ok(())
 }
 
+pub(super) fn compare(cx: &mut compositor::Context, _args: Args) -> Result<()> {
+    view::features::conflicts::cycle_comparison(cx.editor)
+}
+
 pub(super) fn source(cx: &mut compositor::Context, args: Args) -> Result<()> {
     #[cfg(not(feature = "git"))]
     {

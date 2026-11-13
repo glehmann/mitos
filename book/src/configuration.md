@@ -162,6 +162,7 @@ For common examples, see [Configure Mitos](./editor.md).
 | `rulers` | table | See below | Guide columns and glyph. See [`[editor.rulers]`](#editorrulers). |
 | `whitespace` | table | See below | Visible whitespace rendering. See [`[editor.whitespace]`](#editorwhitespace). |
 | `breadcrumb` | table | See below | Breadcrumb navigation bar. See [`[editor.breadcrumb]`](#editorbreadcrumb). |
+| `conflicts` | table | See below | Conflict presentation. See [`[editor.conflicts]`](#editorconflicts). |
 | `indent-guides` | table | See below | Vertical indentation guides. See [`[editor.indent-guides]`](#editorindent-guides). |
 | `soft-wrap` | table | See below | Soft wrapping. See [`[editor.soft-wrap]`](#editorsoft-wrap). |
 | `jump-label-alphabet` | string of unique characters | `"abcdefghijklmnopqrstuvwxyz"` | Alphabet used to generate two-character jump labels. Earlier characters are used first. |
@@ -384,6 +385,12 @@ The `smart-tab` subsection controls syntax-aware Tab behavior.
 | `enable` | boolean | `false` | Show the breadcrumb bar. |
 | `path` | `"full"`, `"file"`, or `"none"` | `"full"` | Include the full path, only the file name, or no path before symbols. |
 | `separator` | string | `" > "` | Text to display between path and symbol segments. Use `""` to hide the separator and `ui.breadcrumb.separator` to style it in your theme. |
+
+### `[editor.conflicts]`
+
+| Key | Type / accepted values | Default | Description |
+| --- | --- | --- | --- |
+| `word-diff` | boolean | `true` | Highlight the words that differ between two sections of a conflict. When `false`, `:vcs-conflict-compare` still shows them for the conflict at the cursor. See [Word differences](./version-control.md#word-differences). |
 
 ### `[editor.clipboard.provider]`
 

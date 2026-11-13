@@ -1145,6 +1145,63 @@ three
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn conflict_compare_cycles_section_pairs_and_hides_word_differences() -> anyhow::Result<()> {
+    let original = "<<<<<<< HEAD\nlet x = 1;\n||||||| base\nlet x = 0;\n=======\nlet y = 0;\n>>>>>>> topic\nafter\n";
+    let mut app = AppBuilder::new()
+        .with_input_text(format!("#[|]#{original}"))
+        .build()?;
+    let highlighted = |app: &TestApplication| {
+        let (_, doc) = current_ref!(app.editor);
+        let highlights = view::document::PresentedDocument::from(doc)
+            .conflict_difference_highlights(0..doc.text().len_chars(), &app.editor.theme);
+        match highlights {
+            Some(editor_core::highlight::OverlayHighlights::Heterogenous { highlights }) => {
+                highlights
+                    .into_iter()
+                    .map(|(_, range)| doc.text().slice_chars(range).to_string())
+                    .collect::<String>()
+            }
+            _ => String::new(),
+        }
+    };
+    assert_eq!(highlighted(&app), "10");
+    for (status, differences) in [
+        ("Comparing base with side 2 (2 of 3)", "xy"),
+        ("Comparing side 1 with side 2 (3 of 3)", "x1y0"),
+        ("Conflict word differences hidden", ""),
+        ("Comparing base with side 1 (1 of 3)", "10"),
+    ] {
+        press_keys(&mut app, ":vcs-conflict-compare<ret>").await?;
+        assert_eq!(app.editor.get_status().unwrap().0, status);
+        assert_eq!(highlighted(&app), differences);
+    }
+    press_keys(&mut app, "7j:vcs-conflict-compare<ret>").await?;
+    assert_eq!(
+        app.editor.get_status().unwrap().0,
+        "'vcs-conflict-compare': Place the cursor inside a conflict first"
+    );
+    assert_eq!(current_ref!(app.editor).1.text().to_string(), original);
+    assert!(app.close().await.is_empty());
+
+    // Without `conflicts.word-diff`, differences only show once asked for.
+    let mut config = test_config();
+    config.editor.conflicts.word_diff = false;
+    let mut app = AppBuilder::new()
+        .with_config(config)
+        .with_input_text(format!("#[|]#{original}"))
+        .build()?;
+    assert_eq!(highlighted(&app), "");
+    press_keys(&mut app, ":vcs-conflict-compare<ret>").await?;
+    assert_eq!(
+        app.editor.get_status().unwrap().0,
+        "Comparing base with side 1 (1 of 3)"
+    );
+    assert_eq!(highlighted(&app), "10");
+    assert!(app.close().await.is_empty());
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn conflict_actions_reject_stale_selection_and_document_snapshots() -> anyhow::Result<()> {
     let original = "prefix\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> topic\nsuffix\n";
     let mut app = AppBuilder::new()

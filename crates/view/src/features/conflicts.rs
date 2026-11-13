@@ -112,6 +112,65 @@ pub fn resolve(editor: &mut Editor, choice: Option<Resolution>) -> Result<()> {
     Ok(())
 }
 
+/// Compare the next pair of sections of the conflict at the cursor, hiding word
+/// differences after the last pair.
+pub fn cycle_comparison(editor: &mut Editor) -> Result<()> {
+    let conflicts = regions(editor)?;
+    let (view, doc) = crate::current_ref!(editor);
+    let text = doc.text();
+    let cursor = text.char_to_byte_idx(doc.selection(view.id).primary().cursor(text.slice(..)));
+    let conflict = conflicts
+        .iter()
+        .find(|c| c.whole.contains(&cursor))
+        .ok_or_else(|| anyhow::anyhow!("Place the cursor inside a conflict first"))?;
+    let comparisons = conflict.comparisons();
+    ensure!(
+        !comparisons.is_empty(),
+        "This conflict has a single section"
+    );
+    let starts: Vec<_> = conflicts
+        .iter()
+        .map(|conflict| text.byte_to_char_idx(conflict.whole.start))
+        .collect();
+    let start = text.byte_to_char_idx(conflict.whole.start);
+    let current = doc.conflict_comparisons.get(&start).copied();
+    let next = current
+        .unwrap_or_else(|| doc.default_conflict_comparison())
+        .map_or(0, |comparison| comparison + 1);
+    let next = Some(next).filter(|comparison| *comparison < comparisons.len());
+    let status = match next {
+        Some(comparison) => {
+            let (left, right) = comparisons[comparison];
+            let name = |index: usize| match conflict.sections[index].kind {
+                conflict::SectionKind::Base => "base".to_owned(),
+                conflict::SectionKind::Side => {
+                    let side = conflict.sections[..index]
+                        .iter()
+                        .filter(|section| section.kind == conflict::SectionKind::Side)
+                        .count();
+                    format!("side {}", side + 1)
+                }
+            };
+            format!(
+                "Comparing {} with {} ({} of {})",
+                name(left),
+                name(right),
+                comparison + 1,
+                comparisons.len()
+            )
+        }
+        None => "Conflict word differences hidden".to_owned(),
+    };
+    let doc = crate::doc_mut!(editor);
+    doc.conflict_comparisons.insert(start, next);
+    // Forget resolved conflicts and recompute this one's differences.
+    doc.conflict_comparisons
+        .retain(|start, _| starts.contains(start));
+    doc.conflicts.take();
+    editor.set_status(status);
+    Ok(())
+}
+
 /// Local actions share the code-action menu and its captured selection. The target
 /// is checked again on execution because the menu can outlive its document snapshot.
 pub(crate) fn actions(editor: &Editor, target: Arc<SelectionRequest>) -> Vec<action::Action> {

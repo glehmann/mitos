@@ -1331,6 +1331,13 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
         args: CommandArgs::new(&[completers::none], &[]),
     },
     TypableCommand {
+        name: "vcs-conflict-compare",
+        aliases: &[],
+        doc: "Highlight word differences between the next pair of sections of the conflict at the cursor, or hide them after the last pair.",
+        action: CommandAction::Committed(super::conflicts::compare),
+        args: CommandArgs::new(&[], &[]),
+    },
+    TypableCommand {
         name: "vcs-conflict-source",
         aliases: &[],
         doc: "Open the base, current, or incoming version of a conflicted file in a read-only split.",

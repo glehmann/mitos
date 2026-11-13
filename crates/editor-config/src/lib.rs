@@ -428,6 +428,7 @@ pub struct Config {
     pub whitespace: WhitespaceConfig,
     /// Persistently display breadcrumb along the top of each view, below any bufferline.
     pub breadcrumb: BreadcrumbConfig,
+    pub conflicts: ConflictsConfig,
     /// Vertical indent width guides.
     pub indent_guides: IndentGuidesConfig,
     pub soft_wrap: SoftWrap,
@@ -550,6 +551,19 @@ impl Default for BreadcrumbConfig {
             path: BreadcrumbPathOptions::default(),
             separator: " > ".into(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ConflictsConfig {
+    /// Highlight the words that differ between two sections of a conflict.
+    pub word_diff: bool,
+}
+
+impl Default for ConflictsConfig {
+    fn default() -> Self {
+        Self { word_diff: true }
     }
 }
 
@@ -1345,6 +1359,7 @@ impl Default for Config {
             rulers: RulersConfig::default(),
             whitespace: WhitespaceConfig::default(),
             breadcrumb: BreadcrumbConfig::default(),
+            conflicts: ConflictsConfig::default(),
             indent_guides: IndentGuidesConfig::default(),
             soft_wrap: SoftWrap {
                 enable: Some(false),
