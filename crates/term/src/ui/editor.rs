@@ -39,6 +39,7 @@ use tui::{
 pub struct EditorView {
     pub(super) sidebar: Option<super::sidebar::Sidebar>,
     sidebar_area: Option<Rect>,
+    bufferline_area: Option<Rect>,
     resizing: Option<resize::Resize>,
     pub keymaps: Keymaps,
     pending_auto_info_since: Option<Instant>,
@@ -56,6 +57,7 @@ impl EditorView {
         Self {
             sidebar: None,
             sidebar_area: None,
+            bufferline_area: None,
             resizing: None,
             keymaps,
             pending_auto_info_since: None,
@@ -360,6 +362,31 @@ impl EditorView {
             modifiers,
             ..
         } = *event;
+
+        if let Some(area) = self
+            .bufferline_area
+            .filter(|area| area.contains((column, row).into()))
+        {
+            match kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if let Some(id) = PaneRenderer::bufferline_document_at(cxt.editor, area, column)
+                    {
+                        cxt.editor.switch(id, view::editor::Action::Replace);
+                    }
+                    return EventResult::Consumed(None);
+                }
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                    let direction = if kind == MouseEventKind::ScrollUp {
+                        Direction::Backward
+                    } else {
+                        Direction::Forward
+                    };
+                    commands::navigation::goto_buffer(cxt.editor, direction, 1);
+                    return EventResult::Consumed(None);
+                }
+                _ => {}
+            }
+        }
 
         let pos_and_view = |editor: &Editor, row, column, ignore_virtual_text| {
             editor.tree.views().find_map(|(view, _focus)| {
@@ -798,6 +825,7 @@ impl Component for EditorView {
             cx.interaction.count = None;
         }
         self.sidebar_area = sidebar_area;
+        self.bufferline_area = layout.bufferline;
         cx.interaction.sidebar_visible = sidebar_area.is_some();
         if let Some(sidebar) = &mut self.sidebar {
             if let Some(sidebar_area) = sidebar_area {

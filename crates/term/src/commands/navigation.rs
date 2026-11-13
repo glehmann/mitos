@@ -32,7 +32,7 @@ pub(super) fn goto_previous_buffer(cx: &mut Context) {
     goto_buffer(cx.editor, Direction::Backward, cx.count());
 }
 
-pub(super) fn goto_buffer(editor: &mut Editor, direction: Direction, count: usize) {
+pub(crate) fn goto_buffer(editor: &mut Editor, direction: Direction, count: usize) {
     let current = view!(editor).document_id();
 
     let id = match direction {

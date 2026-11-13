@@ -352,6 +352,54 @@ async fn mouse_wheel_scrolls_the_hovered_split_without_changing_focus() -> anyho
     Ok(())
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn mouse_on_the_bufferline_switches_buffers() -> anyhow::Result<()> {
+    #[cfg(windows)]
+    use crossterm::event::{Event, MouseButton, MouseEvent, MouseEventKind};
+    #[cfg(not(windows))]
+    use termina::event::{Event, MouseButton, MouseEvent, MouseEventKind};
+
+    let dir = tempfile::tempdir()?;
+    let mut config = helpers::test_config();
+    config.editor.icons = false;
+    config.editor.bufferline.show = editor_config::BufferLine::Always;
+    let mut app = helpers::AppBuilder::new().with_config(config).build()?;
+    // Tabs are " a.txt ", " b.txt " and " c.txt ", after the scratch buffer is replaced.
+    let mut ids = Vec::new();
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        let path = dir.path().join(name);
+        std::fs::write(&path, "")?;
+        ids.push(app.editor.open(&path, view::editor::Action::Replace)?);
+    }
+    helpers::run_event_loop_until_idle(&mut app).await;
+    let first = app.editor.documents().next().unwrap().id();
+    let tab = |index: u16| 7 * (index + u16::from(first != ids[0])) + 1;
+    #[cfg(not(windows))]
+    let modifiers = termina::event::Modifiers::empty();
+    #[cfg(windows)]
+    let modifiers = crossterm::event::KeyModifiers::empty();
+    for (kind, column, row, expected) in [
+        (MouseEventKind::Down(MouseButton::Left), tab(0), 0, ids[0]),
+        (MouseEventKind::Down(MouseButton::Left), tab(1), 0, ids[1]),
+        // Past the last tab, and the same column in the text below, select nothing.
+        (MouseEventKind::Down(MouseButton::Left), 70, 0, ids[1]),
+        (MouseEventKind::Down(MouseButton::Left), tab(2), 1, ids[1]),
+        (MouseEventKind::ScrollDown, 70, 0, ids[2]),
+        (MouseEventKind::ScrollUp, 70, 0, ids[1]),
+    ] {
+        app.handle_terminal_events(Ok(Event::Mouse(MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers,
+        })))
+        .await;
+        assert_eq!(view::current_ref!(app.editor).1.id(), expected);
+    }
+    assert!(app.close().await.is_empty());
+    Ok(())
+}
+
 async fn assert_rotate_view_reverse_binding(
     keys: &str,
     expected_line: usize,

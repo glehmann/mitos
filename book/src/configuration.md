@@ -334,6 +334,7 @@ Saving, autosave, reloads, and native watching are configured in the
 | `separator` | string | `""` | Text to display between visible tabs. Style it with `ui.bufferline.separator` in your theme. |
 
 The bufferline scrolls horizontally to keep the active buffer visible when the tabs exceed the window width.
+Click a tab to switch to its buffer, or use the mouse wheel over the bufferline to cycle through buffers.
 
 Use `:buffer-move-previous`, `:buffer-move-next`, `:buffer-move-start`, and
 `:buffer-move-end` to reorder the current buffer. This order also applies to

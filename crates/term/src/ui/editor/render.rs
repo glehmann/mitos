@@ -630,7 +630,31 @@ impl PaneRenderer {
             config.bufferline.separator.as_str(),
             row_style.patch(separator_style),
         );
+        let (titles, current_tab) = Self::bufferline_titles(editor);
+        super::super::bufferline::render(&titles, current_tab, separator, viewport, surface);
+    }
 
+    /// Document of the bufferline tab drawn at `column`.
+    pub(super) fn bufferline_document_at(
+        editor: &Editor,
+        viewport: Rect,
+        column: u16,
+    ) -> Option<view::DocumentId> {
+        let (titles, current_tab) = Self::bufferline_titles(editor);
+        let config = editor.config();
+        let tab = super::super::bufferline::tab_at(
+            &titles,
+            current_tab,
+            &config.bufferline.separator,
+            viewport,
+            column,
+        )?;
+        editor.documents().nth(tab).map(|doc| doc.id())
+    }
+
+    /// Tab titles in document order and the index of the focused document's tab.
+    fn bufferline_titles(editor: &Editor) -> (Vec<Line<'static>>, usize) {
+        let config = editor.config();
         let bufferline_active = editor
             .theme
             .try_get("ui.bufferline.active")
@@ -681,8 +705,7 @@ impl PaneRenderer {
                 Line::styled(format!(" {fname}{modified} "), style)
             })
             .collect();
-
-        super::super::bufferline::render(&titles, current_tab, separator, viewport, surface);
+        (titles, current_tab)
     }
 
     #[allow(clippy::too_many_lines)]
