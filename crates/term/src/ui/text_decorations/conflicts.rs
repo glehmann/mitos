@@ -13,7 +13,12 @@ pub fn side_style(theme: &Theme, side: ConflictSide) -> Style {
         .unwrap_or_else(|| theme.get(side.fallback()))
 }
 
-pub fn line_backgrounds<'a>(doc: PresentedDocument<'a>, theme: &'a Theme) -> impl Decoration + 'a {
+/// `rulers` are ascending screen columns whose own background is kept.
+pub fn line_backgrounds<'a>(
+    doc: PresentedDocument<'a>,
+    theme: &'a Theme,
+    rulers: Vec<u16>,
+) -> impl Decoration + 'a {
     let marker = theme.try_get_exact("ui.virtual.conflict.marker");
     move |renderer: &mut super::TextRenderer, pos: crate::ui::document::LinePos| {
         let conflicts = doc.conflict_presentation();
@@ -26,18 +31,18 @@ pub fn line_backgrounds<'a>(doc: PresentedDocument<'a>, theme: &'a Theme) -> imp
             } else {
                 return;
             };
-        renderer.set_style(
-            Rect::new(
-                renderer.viewport.x,
-                pos.visual_line,
-                renderer.viewport.width,
-                1,
-            ),
-            Style {
-                bg: background,
-                ..Style::default()
-            },
-        );
+        let style = Style {
+            bg: background,
+            ..Style::default()
+        };
+        let mut start = renderer.viewport.x;
+        for end in rulers.iter().copied().chain([renderer.viewport.right()]) {
+            renderer.set_style(
+                Rect::new(start, pos.visual_line, end.saturating_sub(start), 1),
+                style,
+            );
+            start = end + 1;
+        }
     }
 }
 
@@ -99,7 +104,7 @@ mod tests {
             let mut surface = tui::buffer::Buffer::empty(Rect::new(0, 0, 50, 15));
             surface.set_style(surface.area, theme.get("ui.background"));
             let mut decorations = super::super::DecorationManager::default();
-            decorations.add_decoration(line_backgrounds((&doc).into(), &theme));
+            decorations.add_decoration(line_backgrounds((&doc).into(), &theme, Vec::new()));
             crate::ui::document::render_document_with_styles(
                 &mut surface,
                 (&doc).into(),
@@ -136,7 +141,7 @@ mod tests {
             let mut surface = tui::buffer::Buffer::empty(surface.area);
             surface.set_style(surface.area, theme.get("ui.background"));
             let mut decorations = super::super::DecorationManager::default();
-            decorations.add_decoration(line_backgrounds((&doc).into(), &theme));
+            decorations.add_decoration(line_backgrounds((&doc).into(), &theme, Vec::new()));
             crate::ui::document::render_document_with_styles(
                 &mut surface,
                 (&doc).into(),
@@ -194,7 +199,7 @@ mod tests {
         let mut surface = tui::buffer::Buffer::empty(Rect::new(0, 0, 40, 9));
         surface.set_style(surface.area, theme.get("ui.background"));
         let mut decorations = super::super::DecorationManager::default();
-        decorations.add_decoration(line_backgrounds((&doc).into(), &theme));
+        decorations.add_decoration(line_backgrounds((&doc).into(), &theme, Vec::new()));
         crate::ui::document::render_document_with_styles(
             &mut surface,
             (&doc).into(),

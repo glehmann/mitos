@@ -359,7 +359,14 @@ impl PaneRenderer {
 
         let mut decorations = DecorationManager::default();
         if !doc.conflict_presentation().markers.is_empty() {
-            decorations.add_decoration(text_decorations::conflicts::line_backgrounds(doc, theme));
+            // Glyph rulers keep their character under any background.
+            let rulers = match config.rulers.style {
+                RulerStyle::Background => Self::ruler_columns(editor, doc, view, inner),
+                RulerStyle::Glyph => Vec::new(),
+            };
+            decorations.add_decoration(text_decorations::conflicts::line_backgrounds(
+                doc, theme, rulers,
+            ));
         }
         if !doc.document_links().is_empty() {
             decorations.add_decoration(text_decorations::links::DocumentLinks::new(
@@ -573,7 +580,6 @@ impl PaneRenderer {
         theme: &Theme,
     ) {
         let config = editor.config();
-        let editor_rulers = &config.rulers.columns;
         let ruler_theme = theme.get("ui.virtual.ruler");
         let (character, ruler_style) = match config.rulers.style {
             RulerStyle::Background => (
@@ -586,17 +592,30 @@ impl PaneRenderer {
             ),
         };
 
+        let mut character_buffer = [0; 4];
+        let character: &str = character.encode_utf8(&mut character_buffer);
+        for col in Self::ruler_columns(editor, doc, view, viewport) {
+            for y in viewport.top()..viewport.bottom() {
+                surface.set_stringn(col, y, character, 1, ruler_style);
+            }
+        }
+    }
+
+    /// Ascending screen columns of the rulers visible in `viewport`.
+    fn ruler_columns(
+        editor: &Editor,
+        doc: PresentedDocument<'_>,
+        view: &View,
+        viewport: Rect,
+    ) -> Vec<u16> {
+        let config = editor.config();
         let rulers = doc
             .source()
             .language_config()
             .and_then(|config| config.rulers.as_ref())
-            .unwrap_or(editor_rulers);
-
+            .unwrap_or(&config.rulers.columns);
         let view_offset = doc.view_offset(view.id);
-
-        let mut character_buffer = [0; 4];
-        let character: &str = character.encode_utf8(&mut character_buffer);
-        let ruler_cols = rulers
+        let mut columns: Vec<_> = rulers
             .iter()
             // Convert one-based document columns to viewport columns without
             // truncating large horizontal offsets to u16.
@@ -606,13 +625,11 @@ impl PaneRenderer {
                     .checked_sub(view_offset.horizontal_offset)
             })
             .filter(|&ruler| ruler < usize::from(viewport.width))
-            .map(|ruler| viewport.x + ruler as u16);
-
-        for col in ruler_cols {
-            for y in viewport.top()..viewport.bottom() {
-                surface.set_stringn(col, y, character, 1, ruler_style);
-            }
-        }
+            .map(|ruler| viewport.x + ruler as u16)
+            .collect();
+        columns.sort_unstable();
+        columns.dedup();
+        columns
     }
 
     fn render_bufferline(editor: &Editor, viewport: Rect, surface: &mut Surface) {

@@ -427,3 +427,51 @@ async fn glyph_rulers_use_foreground_with_background_and_default_fallbacks() -> 
     }
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn background_rulers_stay_visible_across_conflict_sections() -> anyhow::Result<()> {
+    for (style, ruler) in [
+        (RulerStyle::Background, Color::Blue),
+        // The glyph is drawn over the section color instead.
+        (RulerStyle::Glyph, Color::Magenta),
+    ] {
+        let mut config = test_config();
+        config.editor.rulers.columns = vec![3, 12];
+        config.editor.rulers.style = style;
+        let mut app = AppBuilder::new()
+            .with_config(config)
+            .with_input_text("#[a|]#\n<<<<<<< x\nours\n=======\ntheirs\n>>>>>>> y\n")
+            .with_lang_loader(language::syntax::Loader::default())
+            .build()?;
+        app.editor.theme = Theme::from(toml::from_str::<toml::Value>(
+            r#"
+            "ui.background" = { bg = "black" }
+            "ui.text" = { fg = "white" }
+            "ui.selection" = { bg = "green" }
+            "ui.cursor" = { bg = "yellow" }
+            "ui.virtual.ruler" = { fg = "red", bg = "blue" }
+            "ui.virtual.conflict" = { bg = "magenta" }
+            "#,
+        )?);
+        keys(&mut app, "<esc>").await?;
+        let (view, doc) = current_ref!(app.editor);
+        let area = view.inner_area(doc);
+        let backend = app.terminal_backend();
+        let buffer = backend.buffer();
+        for line in [2, 4] {
+            let y = area.y + line;
+            for (column, expected) in [(1, Color::Magenta), (2, ruler), (3, Color::Magenta)] {
+                assert_eq!(
+                    buffer[(area.x + column, y)].bg,
+                    expected,
+                    "{style:?} {column}"
+                );
+            }
+            assert_eq!(buffer[(area.x + 11, y)].bg, ruler);
+            assert_eq!(buffer[(area.right() - 1, y)].bg, Color::Magenta);
+        }
+        assert_eq!(buffer[(area.x + 2, area.y + 2)].symbol(), "r");
+        assert!(app.close().await.is_empty());
+    }
+    Ok(())
+}

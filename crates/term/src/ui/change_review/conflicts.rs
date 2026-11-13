@@ -94,6 +94,7 @@ impl ConflictView {
         decorations.add_decoration(text_decorations::conflicts::line_backgrounds(
             doc.into(),
             &cx.editor.theme,
+            Vec::new(),
         ));
         render_document(
             surface,
