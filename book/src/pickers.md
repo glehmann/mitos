@@ -22,6 +22,7 @@ opens the selected item; `Alt-Enter` opens it in the background while keeping
 the picker open. `Ctrl-v` opens a vertical split and `Ctrl-s` a horizontal one.
 `Ctrl-t` toggles the preview. `Esc` closes the picker.
 The mouse wheel over the results moves the selection and stops at either end.
+Click a result to select it and double-click to open it.
 
 Scroll the preview with `Alt-j` / `Alt-k` or `Alt-Down` / `Alt-Up`. Each press
 moves half a page without changing the selected result or query. These keys

@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{application::TestApplication, config::Config};
 use std::path::PathBuf;
-use ui_core::input::{KeyModifiers, MouseEvent, MouseEventKind};
+use ui_core::input::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 struct Location {
     target: QuicklistTarget,
@@ -48,12 +48,12 @@ impl Fixture {
         })
     }
 
-    fn event(&mut self, event: Event) {
-        event_with_config(&mut self.picker, &mut self.app, &self.config, event);
+    fn event(&mut self, event: Event) -> EventResult {
+        event_with_config(&mut self.picker, &mut self.app, &self.config, event)
     }
 
     fn key(&mut self, key: &str) {
-        self.event(Event::Key(key.parse().unwrap()));
+        let _ = self.event(Event::Key(key.parse().unwrap()));
     }
 
     fn draw(&mut self, width: u16, height: u16) -> Surface {
@@ -336,5 +336,34 @@ async fn mouse_wheel_over_results_moves_the_selection_without_wrapping() -> anyh
     assert_eq!(wheel(MouseEventKind::ScrollDown, 5), 4);
     assert_eq!(wheel(MouseEventKind::ScrollUp, 5), 1);
     assert_eq!(wheel(MouseEventKind::ScrollUp, 5), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn clicking_a_result_selects_it_and_a_double_click_accepts_it() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let locations = (0..5)
+        .map(|i| location(dir.path().join(format!("file-{i}.txt")), None))
+        .collect();
+    let mut fixture = Fixture::new(locations).await?;
+    fixture.draw(100, 20);
+    let mut click = |row| {
+        let result = fixture.event(Event::Mouse(MouseEvent {
+            column: 20,
+            row,
+            kind: MouseEventKind::Down(MouseButton::Left),
+            modifiers: KeyModifiers::empty(),
+        }));
+        let closes = matches!(result, EventResult::Consumed(Some(_)));
+        (fixture.picker.results.cursor, closes)
+    };
+    // The prompt, its separator, and the space below the results select nothing.
+    for row in [1, 2, 8] {
+        assert_eq!(click(row), (0, false));
+    }
+    assert_eq!(click(5), (2, false));
+    // A second click on another result is not a double click.
+    assert_eq!(click(6), (3, false));
+    assert_eq!(click(6), (3, true));
     Ok(())
 }

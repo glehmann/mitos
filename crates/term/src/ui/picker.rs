@@ -51,6 +51,7 @@ use std::{
         atomic::{self, AtomicUsize},
         Arc,
     },
+    time::Duration,
 };
 
 use crate::ui::{Prompt, PromptEvent};
@@ -126,6 +127,9 @@ pub enum PreviewAction {
 pub const ID: &str = "picker";
 
 pub const MIN_AREA_WIDTH_FOR_PREVIEW: u16 = 72;
+
+/// Longest delay between two clicks on a result for them to accept it.
+const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(500);
 
 fn split_picker_area(area: Rect, show_preview: bool) -> (Rect, Option<Rect>) {
     if show_preview {
@@ -314,6 +318,8 @@ pub struct Picker<T: 'static + Send + Sync, D: 'static> {
     preview_area: Option<Rect>,
     /// Result rows as last rendered, excluding the header.
     list_area: Option<Rect>,
+    /// Time and result index of the last click, to detect double clicks.
+    last_click: Option<(Instant, u32)>,
     /// Constraints for tabular formatting
     widths: Vec<Constraint>,
 
@@ -462,6 +468,7 @@ impl<T: 'static + Send + Sync, D: 'static + Send + Sync> Picker<T, D> {
             show_preview: true,
             preview_area: None,
             list_area: None,
+            last_click: None,
             callback_fn: Box::new(callback_fn),
             on_close: None,
             default_action: Action::Replace,
@@ -1943,11 +1950,26 @@ impl<I: 'static + Send + Sync, D: 'static + Send + Sync> Component for Picker<I,
                     let lines = ctx.editor.config().scroll.wheel_lines.unsigned_abs() as u32;
                     self.rendered_results = None;
                     return self.execute_actions(&vec![action; lines.min(room) as usize], ctx);
-                } else if mouse.kind == MouseEventKind::Down(MouseButton::Left)
-                    && let Some((area, first)) = self.rendered_results
-                    && area.contains(position)
-                {
-                    self.results.cursor = first + u32::from(mouse.row - area.y);
+                } else if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                    let index = self
+                        .rendered_results
+                        .filter(|(area, _)| area.contains(position))
+                        .map(|(area, first)| first + u32::from(mouse.row - area.y));
+                    let last_click = self.last_click.take();
+                    if let Some(index) = index {
+                        let now = Instant::now();
+                        // Enter replaces matches while the replacement is shown; a click only selects.
+                        if !self.replacement_visible()
+                            && self.results.cursor == index
+                            && last_click.is_some_and(|(at, last)| {
+                                last == index && now.duration_since(at) <= DOUBLE_CLICK_INTERVAL
+                            })
+                        {
+                            return self.execute_actions(&[PickerAction::Accept], ctx);
+                        }
+                        self.last_click = Some((now, index));
+                        self.results.cursor = index;
+                    }
                 }
                 return EventResult::Consumed(None);
             }
