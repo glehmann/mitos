@@ -73,6 +73,8 @@ pub struct ConflictPresentation {
     pub error: Option<String>,
     line_numbers: Vec<ConflictLineNumbers>,
     labels: [Vec<InlineAnnotation>; 2],
+    /// Character range of each region.
+    extents: Vec<Range<usize>>,
     /// Computed for each region when it first becomes visible.
     differences: Vec<OnceLock<Option<Differences>>>,
 }
@@ -155,6 +157,13 @@ impl ConflictPresentation {
             }
         }
         Self {
+            extents: regions
+                .iter()
+                .map(|region| {
+                    text.byte_to_char_idx(region.whole.start)
+                        ..text.byte_to_char_idx(region.whole.end)
+                })
+                .collect(),
             differences: regions.iter().map(|_| OnceLock::new()).collect(),
             regions,
             markers,
@@ -162,6 +171,12 @@ impl ConflictPresentation {
             line_numbers,
             labels,
         }
+    }
+
+    /// Character ranges of the conflicts, in document order. Language servers
+    /// read the markers as broken code, so diagnostics there are not shown.
+    pub fn extents(&self) -> &[Range<usize>] {
+        &self.extents
     }
 
     /// Differences for `comparison`, an index into [`Conflict::comparisons`].
@@ -274,6 +289,14 @@ impl ConflictPresentation {
         }
         Some(side)
     }
+}
+
+/// Whether the characters from `start` to `end` touch one of the ordered `extents`.
+pub fn overlaps(extents: &[Range<usize>], start: usize, end: usize) -> bool {
+    let index = extents.partition_point(|extent| extent.end <= start);
+    extents
+        .get(index)
+        .is_some_and(|extent| extent.start < end.max(start + 1))
 }
 
 /// Git introduces its first side with the opening marker.

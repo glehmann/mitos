@@ -44,6 +44,7 @@ fn diagnostic<'doc>(
     let info = theme.get("info");
     let hint = theme.get("hint");
     let diagnostics = doc.diagnostics();
+    let conflicts = doc.conflict_presentation().extents();
 
     Box::new(
         move |line: usize, _selected: bool, first_visual_line: bool, out: &mut String| {
@@ -65,6 +66,9 @@ fn diagnostic<'doc>(
                                     )
                                     .any(|ls| ls.id() == id)
                         })
+                })
+                .filter(|d| {
+                    !view::features::conflicts::overlaps(conflicts, d.range.start, d.range.end)
                 });
             diagnostics_on_line.max_by_key(|d| d.severity).map(|d| {
                 let icon = if editor.config().icons {

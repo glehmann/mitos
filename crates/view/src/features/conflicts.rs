@@ -7,7 +7,7 @@ use editor_core::{Rope, Selection, Transaction};
 use vcs::conflict::{self, Resolution};
 
 mod presentation;
-pub use presentation::{ConflictMarker, ConflictPresentation, ConflictSide};
+pub use presentation::{overlaps, ConflictMarker, ConflictPresentation, ConflictSide};
 
 use super::request::SelectionRequest;
 use crate::{action, editor::Action, Document, DocumentId, Editor};

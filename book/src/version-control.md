@@ -543,6 +543,9 @@ To see the whole file for either side, run `:vcs-conflict-source current` or
 `:vcs-conflict-source incoming`. Use `:vcs-conflict-source base` to see the original
 version. Each version opens in a read-only split. Close it with `:q`.
 
+Language servers read conflict markers as broken code. Diagnostics inside an
+unresolved conflict are hidden until you resolve it.
+
 ### Word differences
 
 Inside a conflict, Mitos highlights the words that differ between two of its
