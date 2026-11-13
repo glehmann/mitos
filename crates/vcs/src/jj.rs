@@ -23,7 +23,7 @@ use crate::{
 };
 
 /// Root of the workspace containing `path`.
-fn workspace_root(path: &Path, trust_full: bool) -> Result<&Path> {
+pub(crate) fn workspace_root(path: &Path, trust_full: bool) -> Result<&Path> {
     ensure!(
         trust_full,
         "Jujutsu repositories require a trusted workspace"
@@ -39,7 +39,7 @@ fn checkout_marker(root: &Path) -> PathBuf {
 }
 
 /// Run from the workspace root so that templates print root-relative paths.
-fn jj(root: &Path) -> Command {
+pub(crate) fn jj(root: &Path) -> Command {
     let mut command = Command::new("jj");
     command
         .current_dir(root)
@@ -51,7 +51,7 @@ fn jj(root: &Path) -> Command {
     command
 }
 
-fn run(command: &mut Command) -> Result<Vec<u8>> {
+pub(crate) fn run(command: &mut Command) -> Result<Vec<u8>> {
     let output = command.output().context("failed to run `jj`")?;
     ensure!(
         output.status.success(),
