@@ -78,7 +78,7 @@ async fn empty_or_unavailable_registries_report_one_terminal_error() {
             "no diff provider returns success"
         );
     }
-    #[cfg(not(feature = "git"))]
+    #[cfg(not(any(feature = "git", feature = "jj")))]
     assert!(DiffProviderRegistry::default().providers.is_empty());
 }
 
