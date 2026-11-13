@@ -887,6 +887,28 @@ mod tests {
     }
 
     #[test]
+    fn one_mutable_rule_styles_every_kind_of_mutable_binding() {
+        let theme = Theme::from(Value::Table(toml::toml! {
+            "variable" = "white"
+            "variable.parameter" = "blue"
+            "variable.mutable" = { modifiers = ["bold"] }
+        }));
+        for (scope, color) in [
+            ("variable.mutable", Color::White),
+            ("variable.parameter.mutable", Color::Blue),
+            ("variable.parameter.declaration.mutable", Color::Blue),
+        ] {
+            let style = theme.get(scope);
+            assert_eq!(style.fg, Some(color), "{scope}");
+            assert!(style.add_modifier.contains(Modifier::BOLD), "{scope}");
+        }
+        assert!(!theme
+            .get("variable.parameter.declaration")
+            .add_modifier
+            .contains(Modifier::BOLD));
+    }
+
+    #[test]
     fn readonly_semantic_bindings_use_explicit_theme_rules() {
         let theme = Theme::from(Value::Table(toml::toml! {
             "variable" = "white"

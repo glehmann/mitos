@@ -273,6 +273,8 @@ fn classification(
             "modification" => "modification",
             "documentation" => "documentation",
             "defaultLibrary" => "builtin",
+            // rust-analyzer's extension for `mut` bindings and their uses.
+            "mutable" => "mutable",
             _ => continue,
         };
         scope.push('.');
@@ -438,6 +440,22 @@ mod tests {
                 "function.method"
             );
         }
+    }
+
+    #[test]
+    fn mutable_bindings_are_classified_and_other_extensions_skipped() {
+        let legend = lsp::SemanticTokensLegend {
+            token_types: vec![lsp::SemanticTokenType::PARAMETER],
+            token_modifiers: ["declaration", "reference", "mutable"]
+                .map(lsp::SemanticTokenModifier::new)
+                .to_vec(),
+        };
+        let mut parameter = token(0, 1);
+        parameter.token_modifiers_bitset = 0b111;
+        assert_eq!(
+            classification(&parameter, &legend).unwrap(),
+            "variable.parameter.declaration.mutable"
+        );
     }
 
     #[test]

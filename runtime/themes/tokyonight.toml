@@ -7,6 +7,7 @@
 "ui.welcome.command" = { fg = "orange" }
 "variable.readonly" = { fg = "orange" }
 "variable.other.member.readonly" = { fg = "orange" }
+"variable.mutable" = { underline = { style = "line" } }
 
 "ui.picker.match" = { fg = "aqua" }
 "comment.error" = { fg = "error" }

@@ -276,6 +276,8 @@ semantic-token registration are not advertised.
 
 Use `variable.readonly` and `variable.other.member.readonly` to style read-only
 bindings and fields. Bundled themes define these rules explicitly.
+Use `variable.mutable` to style mutable bindings wherever they are used, when
+the server reports them, as rust-analyzer does.
 
 A semantic token without a declaration or definition modifier is not assumed to
 be a call: it may be a reference to a callable value.
