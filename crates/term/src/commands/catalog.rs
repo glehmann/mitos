@@ -1326,9 +1326,16 @@ pub const TYPABLE_COMMAND_LIST: &[TypableCommand] = &[
     TypableCommand {
         name: "vcs-conflict-resolve",
         aliases: &[],
-        doc: "Keep the current side, incoming side, or both sides of the conflict at the cursor.",
+        doc: "Resolve the conflict at the cursor by keeping its current side, incoming side, base, both sides, or the section under the cursor.",
         action: CommandAction::Committed(super::conflicts::resolve),
         args: CommandArgs::new(&[completers::none], &[]),
+    },
+    TypableCommand {
+        name: "vcs-conflict-compare",
+        aliases: &[],
+        doc: "Highlight word differences between the next pair of sections of the conflict at the cursor, or hide them after the last pair.",
+        action: CommandAction::Committed(super::conflicts::compare),
+        args: CommandArgs::new(&[], &[]),
     },
     TypableCommand {
         name: "vcs-conflict-source",

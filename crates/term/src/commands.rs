@@ -21,7 +21,7 @@ mod macros;
 mod mappable;
 mod mode;
 mod movement;
-mod navigation;
+pub(crate) mod navigation;
 mod palette;
 mod picker;
 mod quicklist;

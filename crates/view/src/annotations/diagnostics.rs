@@ -50,6 +50,8 @@ fn diagnostic_text_format(
 pub struct InlineDiagnosticAccumulator<'a> {
     idx: usize,
     diagnostics: &'a [Diagnostic],
+    /// Ordered character ranges whose diagnostics are not shown.
+    hidden: &'a [std::ops::Range<usize>],
     stack: Vec<(&'a Diagnostic, u16)>,
     config: InlineDiagnosticsConfig,
     cursor: usize,
@@ -61,11 +63,13 @@ impl<'a> InlineDiagnosticAccumulator<'a> {
     pub fn new(
         cursor: usize,
         diagnostics: &'a [Diagnostic],
+        hidden: &'a [std::ops::Range<usize>],
         config: InlineDiagnosticsConfig,
     ) -> Self {
         InlineDiagnosticAccumulator {
             idx: 0,
             diagnostics,
+            hidden,
             stack: Vec::new(),
             config,
             cursor,
@@ -139,7 +143,10 @@ impl<'a> InlineDiagnosticAccumulator<'a> {
             if diag.range.start != grapheme.char_idx {
                 break;
             }
-            self.stack.push((diag, anchor_col as u16));
+            if !crate::features::conflicts::overlaps(self.hidden, diag.range.start, diag.range.end)
+            {
+                self.stack.push((diag, anchor_col as u16));
+            }
             self.idx += 1;
         }
         false
@@ -377,13 +384,14 @@ pub(crate) struct InlineDiagnostics<'a> {
 impl<'a> InlineDiagnostics<'a> {
     pub(crate) fn new(
         diagnostics: &'a [Diagnostic],
+        hidden: &'a [std::ops::Range<usize>],
         cursor: usize,
         width: u16,
         horizontal_off: usize,
         config: InlineDiagnosticsConfig,
     ) -> Self {
         InlineDiagnostics {
-            state: InlineDiagnosticAccumulator::new(cursor, diagnostics, config),
+            state: InlineDiagnosticAccumulator::new(cursor, diagnostics, hidden, config),
             width,
             horizontal_off,
         }
@@ -441,6 +449,7 @@ mod tests {
         let mut annotations = TextAnnotations::default();
         annotations.add_line_annotation(InlineDiagnostics::new(
             &diagnostics,
+            &[],
             cursor,
             50,
             horizontal_off,

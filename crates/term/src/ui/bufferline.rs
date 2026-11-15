@@ -8,24 +8,18 @@ use tui::{
 };
 use view::graphics::RectExt as _;
 
-pub(super) fn render(
-    titles: &[Line<'_>],
+/// Visible tabs with the column of the separator before them and their clipped
+/// areas, from the first one drawn.
+fn layout<'a>(
+    titles: &'a [Line<'a>],
     active: usize,
-    separator: Span<'_>,
+    separator_width: usize,
     mut area: Rect,
-    surface: &mut Buffer,
-) {
-    if area.is_empty() {
-        return;
-    }
-    let Some(active_title) = titles.get(active) else {
-        return;
-    };
-    let separator_width = visible_grapheme_widths(&separator.content).sum::<usize>();
+) -> impl Iterator<Item = (usize, &'a Line<'a>, Option<u16>, Rect)> {
     // Include preceding tabs while the active tab still fits. An oversized active
     // tab starts at the left edge so its filename is visible even in narrow views.
-    let mut first = active;
-    let mut width = active_title.width();
+    let mut first = active.min(titles.len());
+    let mut width = titles.get(active).map_or(0, Line::width);
     while first > 0 {
         let with_previous = width
             .saturating_add(titles[first - 1].width())
@@ -37,10 +31,16 @@ pub(super) fn render(
         first -= 1;
     }
 
-    for (index, title) in titles[first..].iter().enumerate() {
+    let titles = if active < titles.len() {
+        &titles[first..]
+    } else {
+        &[]
+    };
+    titles.iter().enumerate().map_while(move |(index, title)| {
         if area.is_empty() {
-            break;
+            return None;
         }
+        let mut separator = None;
         if index > 0 && separator_width > 0 {
             let first_width = title
                 .spans
@@ -50,21 +50,52 @@ pub(super) fn render(
             if first_width
                 .is_none_or(|width| separator_width.saturating_add(width) > usize::from(area.width))
             {
-                break;
+                return None;
             }
+            separator = Some(area.x);
+            area = area.clip_left(separator_width as u16);
+        }
+        let width = title.width().min(usize::from(area.width)) as u16;
+        let tab = Rect { width, ..area };
+        area = area.clip_left(width);
+        Some((first + index, title, separator, tab))
+    })
+}
+
+pub(super) fn render(
+    titles: &[Line<'_>],
+    active: usize,
+    separator: Span<'_>,
+    area: Rect,
+    surface: &mut Buffer,
+) {
+    let separator_width = visible_grapheme_widths(&separator.content).sum::<usize>();
+    for (_, title, separator_x, tab) in layout(titles, active, separator_width, area) {
+        if let Some(x) = separator_x {
             surface.set_stringn(
-                area.x,
+                x,
                 area.y,
                 &separator.content,
                 separator_width,
                 separator.style,
             );
-            area = area.clip_left(separator_width as u16);
         }
-        let width = title.width().min(usize::from(area.width)) as u16;
-        title.render(Rect { width, ..area }, surface);
-        area = area.clip_left(width);
+        title.render(tab, surface);
     }
+}
+
+/// Index of the tab drawn at `column`.
+pub(super) fn tab_at(
+    titles: &[Line<'_>],
+    active: usize,
+    separator: &str,
+    area: Rect,
+    column: u16,
+) -> Option<usize> {
+    let separator_width = visible_grapheme_widths(separator).sum::<usize>();
+    layout(titles, active, separator_width, area)
+        .find(|(_, _, _, tab)| (tab.left()..tab.right()).contains(&column))
+        .map(|(index, ..)| index)
 }
 
 #[cfg(test)]
@@ -117,6 +148,27 @@ mod tests {
                 assert_eq!(surface[(area.x + 2, area.y)].bg, Color::Blue);
             }
         }
+    }
+
+    #[test]
+    fn finds_the_tab_under_a_column_after_scrolling_and_clipping() {
+        let titles = [" one ", " two ", " three ", " four "].map(Line::from);
+        let area = Rect::new(2, 0, 14, 1);
+        // Drawn as "  two  three  f" from column 2: " one " is scrolled out.
+        assert_eq!(tab_at(&titles, 2, "", area, 1), None);
+        assert_eq!(tab_at(&titles, 2, "", area, 2), Some(1));
+        assert_eq!(tab_at(&titles, 2, "", area, 6), Some(1));
+        assert_eq!(tab_at(&titles, 2, "", area, 7), Some(2));
+        assert_eq!(tab_at(&titles, 2, "", area, 15), Some(3));
+        assert_eq!(tab_at(&titles, 2, "", area, 16), None);
+        // Space after the last tab belongs to no tab.
+        assert_eq!(tab_at(&titles[..1], 0, "", area, 7), None);
+        assert_eq!(tab_at(&titles, 9, "", area, 3), None);
+        // Drawn as "aa|bb": the separator belongs to no tab.
+        let titles = ["aa", "bb"].map(Line::from);
+        let area = Rect::new(0, 0, 10, 1);
+        let tabs = (0..6).map(|column| tab_at(&titles, 1, "|", area, column));
+        assert!(tabs.eq([Some(0), Some(0), None, Some(1), Some(1), None]));
     }
 
     #[test]

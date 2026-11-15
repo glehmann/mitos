@@ -9,7 +9,11 @@ use tui::{
 };
 use ui_core::keymap::{KeymapState, Lookup};
 use vcs::LineBlame;
-use view::{features::blame::BlameDetailsUpdate, graphics::Rect, Editor};
+use view::{
+    features::blame::BlameDetailsUpdate,
+    graphics::{Modifier, Rect},
+    Editor,
+};
 
 use crate::{
     compositor::{Component, Compositor, Context, Event, EventResult},
@@ -20,6 +24,8 @@ use crate::{
 pub struct BlameDetails {
     keys: KeymapState,
     commit_id: String,
+    change_id: Option<String>,
+    unique_prefixes: (usize, usize),
     author: String,
     date: String,
     title: String,
@@ -29,6 +35,15 @@ pub struct BlameDetails {
 
 impl BlameDetails {
     pub const ID: &'static str = "blame-details";
+
+    /// A Jujutsu change is named by its change ID, which survives rewrites.
+    fn id_name(change: bool) -> &'static str {
+        if change {
+            "change ID"
+        } else {
+            "commit ID"
+        }
+    }
 
     fn new(blame: LineBlame) -> Self {
         let title = blame.commit_title.unwrap_or_default();
@@ -47,6 +62,8 @@ impl BlameDetails {
         Self {
             keys: KeymapState::default(),
             commit_id: blame.commit_id,
+            change_id: blame.change_id,
+            unique_prefixes: blame.unique_prefixes,
             author,
             date: blame.commit_date.unwrap_or_else(|| "Unknown date".into()),
             title,
@@ -62,11 +79,29 @@ impl BlameDetails {
                 .unwrap_or_default()
         };
         let label = style("keyword");
-        let mut lines = vec![
-            Line::from(vec![
-                Span::styled("Commit: ", label),
-                Span::styled(&self.commit_id, style("constant")),
-            ]),
+        // Like `jj`, emphasize the shortest prefix that names the revision.
+        let (unique, rest) = (style("constant"), style("comment"));
+        let id = move |name, id, prefix| -> Line<'_> {
+            let (start, end): (&str, &str) = str::split_at_checked(id, prefix).unwrap_or((id, ""));
+            let spans = if start.is_empty() || end.is_empty() {
+                vec![Span::styled(name, label), Span::styled(id, unique)]
+            } else {
+                vec![
+                    Span::styled(name, label),
+                    Span::styled(start, unique.add_modifier(Modifier::BOLD)),
+                    Span::styled(end, rest),
+                ]
+            };
+            Line::from(spans)
+        };
+        let (change_prefix, commit_prefix) = self.unique_prefixes;
+        let mut lines: Vec<_> = self
+            .change_id
+            .iter()
+            .map(|change| id("Change: ", change, change_prefix))
+            .collect();
+        lines.extend([
+            id("Commit: ", &self.commit_id, commit_prefix),
             Line::from(vec![
                 Span::styled("Author: ", label),
                 Span::styled(&self.author, style("string")),
@@ -76,7 +111,7 @@ impl BlameDetails {
                 Span::styled(&self.date, style("constant.numeric")),
             ]),
             Line::default(),
-        ];
+        ]);
         lines.extend(
             self.title
                 .lines()
@@ -105,13 +140,14 @@ pub fn show(
     };
     match result {
         Ok(blame) => {
+            let id = BlameDetails::id_name(blame.change_id.is_some());
             let popup = Popup::new(BlameDetails::ID, BlameDetails::new(blame))
                 .with_border(panel::PopupBorder::InlineBlame)
                 .auto_close(true);
             compositor.replace_or_push(BlameDetails::ID, popup);
             let keys = &config.component_keys;
             editor.set_status(format!(
-                "Blame: {} copies commit ID; {} copies message; {} closes",
+                "Blame: {} copies {id}; {} copies message; {} closes",
                 action_hint(&keys.blame, &BlameAction::CopyCommitId),
                 action_hint(&keys.blame, &BlameAction::CopyMessage),
                 action_hint(&keys.popup, &PopupAction::Cancel),
@@ -139,7 +175,10 @@ impl Component for BlameDetails {
             Lookup::Actions(actions) => {
                 for action in actions {
                     let (text, label) = match action {
-                        BlameAction::CopyCommitId => (&self.commit_id, "commit ID"),
+                        BlameAction::CopyCommitId => (
+                            self.change_id.as_ref().unwrap_or(&self.commit_id),
+                            Self::id_name(self.change_id.is_some()),
+                        ),
                         BlameAction::CopyMessage => (&self.message, "commit message"),
                     };
                     match cx.editor.registers.write('+', vec![text.clone()]) {

@@ -31,15 +31,22 @@ pub(super) fn navigate(cx: &mut compositor::Context, args: Args) -> Result<()> {
 }
 
 pub(super) fn resolve(cx: &mut compositor::Context, args: Args) -> Result<()> {
+    use vcs::conflict::Resolution;
     let choice = match args.first() {
-        Some("current") => vcs::conflict::Resolution::Current,
-        Some("incoming") => vcs::conflict::Resolution::Incoming,
-        Some("both") => vcs::conflict::Resolution::Both,
-        _ => bail!("Expected current, incoming, or both"),
+        Some("current") => Some(Resolution::Current),
+        Some("incoming") => Some(Resolution::Incoming),
+        Some("base") => Some(Resolution::Base),
+        Some("both") => Some(Resolution::Both),
+        Some("cursor") => None,
+        _ => bail!("Expected current, incoming, base, both, or cursor"),
     };
     view::features::conflicts::resolve(cx.editor, choice)?;
 
     Ok(())
+}
+
+pub(super) fn compare(cx: &mut compositor::Context, _args: Args) -> Result<()> {
+    view::features::conflicts::cycle_comparison(cx.editor)
 }
 
 pub(super) fn source(cx: &mut compositor::Context, args: Args) -> Result<()> {

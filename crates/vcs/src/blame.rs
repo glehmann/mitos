@@ -11,20 +11,32 @@ mod time;
 
 #[cfg(feature = "git")]
 mod ignored;
+#[cfg(feature = "jj")]
+mod jj;
 
 /// Blame for the committed version of a file, with commit metadata prepared off-thread.
 #[derive(Debug)]
 pub struct FileBlame {
-    #[cfg(feature = "git")]
+    #[cfg(any(feature = "git", feature = "jj"))]
+    path: PathBuf,
+    #[cfg(any(feature = "git", feature = "jj"))]
     source: BlameSource,
     ranges: Vec<BlameRange>,
     commits: Vec<LineBlame>,
 }
 
+#[cfg(any(feature = "git", feature = "jj"))]
+#[derive(Debug, PartialEq, Eq)]
+enum BlameSource {
+    #[cfg(feature = "git")]
+    Git(GitSource),
+    #[cfg(feature = "jj")]
+    Jj(jj::Source),
+}
+
 #[cfg(feature = "git")]
 #[derive(Debug, PartialEq, Eq)]
-struct BlameSource {
-    path: PathBuf,
+struct GitSource {
     revision: gix::ObjectId,
     trust_full: bool,
     ignored: ignored::IgnoredRevisions,
@@ -88,9 +100,46 @@ impl FileBlame {
         Self::try_refresh(file, trust_full, None)
     }
 
-    /// Reuse a snapshot only when its path, HEAD, trust and ignored revisions match.
-    #[cfg(not(feature = "git"))]
+    /// Reuse a snapshot only when its path and everything the blame was computed from match.
+    ///
+    /// A Jujutsu workspace is blamed through `jj`, and through Git when that fails.
     pub fn try_refresh(
+        file: PathBuf,
+        trust_full: bool,
+        cached: Option<Arc<Self>>,
+    ) -> Result<Arc<Self>> {
+        #[cfg(feature = "jj")]
+        match Self::try_refresh_jj(&file, trust_full, cached.as_ref()) {
+            Ok(blame) => return Ok(blame),
+            Err(error) => log::debug!("Jujutsu blame for {}: {error:#}", file.display()),
+        }
+        Self::try_refresh_git(file, trust_full, cached)
+    }
+
+    #[cfg(feature = "jj")]
+    fn try_refresh_jj(
+        file: &std::path::Path,
+        trust_full: bool,
+        cached: Option<&Arc<Self>>,
+    ) -> Result<Arc<Self>> {
+        let source = jj::source(file, trust_full)?;
+        if let Some(cached) = cached
+            && cached.path == file
+            && matches!(&cached.source, BlameSource::Jj(cached) if *cached == source)
+        {
+            return Ok(cached.clone());
+        }
+        let (ranges, commits) = jj::blame(file, trust_full, &source)?;
+        Ok(Arc::new(Self {
+            path: file.to_owned(),
+            source: BlameSource::Jj(source),
+            ranges,
+            commits,
+        }))
+    }
+
+    #[cfg(not(feature = "git"))]
+    fn try_refresh_git(
         _file: PathBuf,
         _trust_full: bool,
         _cached: Option<Arc<Self>>,
@@ -99,7 +148,7 @@ impl FileBlame {
     }
 
     #[cfg(feature = "git")]
-    pub fn try_refresh(
+    fn try_refresh_git(
         file: PathBuf,
         trust_full: bool,
         cached: Option<Arc<Self>>,
@@ -118,14 +167,14 @@ impl FileBlame {
             .context("Git blame requires a working tree")?;
         // Git's linked-worktree metadata can omit the Windows verbatim prefix.
         let workdir = stdx::path::canonicalize_existing(workdir);
-        let source = BlameSource {
-            path: file.clone(),
+        let source = GitSource {
             revision: head,
             trust_full,
             ignored: ignored::IgnoredRevisions::read(&repo, &workdir)?,
         };
         if let Some(cached) = cached
-            && cached.source == source
+            && cached.path == file
+            && matches!(&cached.source, BlameSource::Git(cached) if *cached == source)
         {
             return Ok(cached);
         }
@@ -153,6 +202,8 @@ impl FileBlame {
                 let line_blame = LineBlame {
                     commit_hash: commit.short_id().ok().map(|id| id.to_string()),
                     commit_id: entry.commit_id.to_string(),
+                    change_id: None,
+                    unique_prefixes: (0, 0),
                     author_name: author.map(|author| author.name.to_string()),
                     author_email: author.map(|author| author.email.to_string()),
                     commit_date: time
@@ -177,7 +228,8 @@ impl FileBlame {
         }
         ranges.sort_unstable_by_key(|range| range.lines.start);
         Ok(Arc::new(Self {
-            source,
+            path: file,
+            source: BlameSource::Git(source),
             ranges,
             commits,
         }))
@@ -188,6 +240,10 @@ impl FileBlame {
 pub struct LineBlame {
     /// Full object ID for copying and resolving the commit without ambiguity.
     pub commit_id: String,
+    /// Full Jujutsu change ID, which then also replaces the hash in the `commit` variable.
+    pub change_id: Option<String>,
+    /// Lengths of the shortest unique prefixes of the change and commit IDs, 0 when unknown.
+    pub unique_prefixes: (usize, usize),
     commit_hash: Option<String>,
     pub author_name: Option<String>,
     pub author_email: Option<String>,

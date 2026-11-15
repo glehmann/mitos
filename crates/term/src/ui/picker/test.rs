@@ -77,10 +77,8 @@ pub(crate) fn event_with_config<T: Send + Sync, D: Send + Sync>(
     app: &mut TestApplication,
     config: &AppConfig,
     event: Event,
-) {
-    with_context(app, config, |cx| {
-        picker.handle_event(&event, cx);
-    });
+) -> EventResult {
+    with_context(app, config, |cx| picker.handle_event(&event, cx))
 }
 
 fn with_context<R>(

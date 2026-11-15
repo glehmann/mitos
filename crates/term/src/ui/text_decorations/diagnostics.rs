@@ -61,7 +61,12 @@ impl<'a> InlineDiagnostics<'a> {
         icons: bool,
     ) -> Self {
         InlineDiagnostics {
-            state: InlineDiagnosticAccumulator::new(cursor, doc.diagnostics(), config),
+            state: InlineDiagnosticAccumulator::new(
+                cursor,
+                doc.diagnostics(),
+                doc.conflict_presentation().extents(),
+                config,
+            ),
             styles: Styles::new(theme),
             eol_diagnostics,
             icons,

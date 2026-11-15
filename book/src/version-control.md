@@ -511,6 +511,7 @@ conflict or `[m` to move to the previous one.
 
 Place the cursor inside a conflict and press `Space a`. Choose **Accept current**,
 **Accept incoming**, or **Accept both (current then incoming)** to keep that text.
+When the conflict includes the original text, **Accept base** restores it.
 The menu also includes other available code actions.
 
 Press `u` to undo a choice. If you keep both sides, review and edit the combined
@@ -523,6 +524,18 @@ You can also resolve conflicts with commands:
 | `:vcs-conflict-resolve current` | Keep the current side |
 | `:vcs-conflict-resolve incoming` | Keep the incoming side |
 | `:vcs-conflict-resolve both` | Keep current followed by incoming |
+| `:vcs-conflict-resolve base` | Keep the original text, when the conflict includes it |
+| `:vcs-conflict-resolve cursor` | Keep the section under the cursor |
+
+Bind the choices you use most, for example under `Space m`, which matches the
+`[m` and `]m` conflict navigation:
+
+```toml
+[keys.normal.space.m]
+c = ":vcs-conflict-resolve current"
+i = ":vcs-conflict-resolve incoming"
+x = ":vcs-conflict-resolve cursor"
+```
 
 During a merge, **current** is the branch you have checked out and **incoming** is
 the branch you are merging. During a rebase, **current** is the branch you are
@@ -532,6 +545,54 @@ applied.
 To see the whole file for either side, run `:vcs-conflict-source current` or
 `:vcs-conflict-source incoming`. Use `:vcs-conflict-source base` to see the original
 version. Each version opens in a read-only split. Close it with `:q`.
+
+Language servers read conflict markers as broken code. Diagnostics inside an
+unresolved conflict are hidden until you resolve it, and its text keeps its
+syntax colors instead of the server's semantic highlighting.
+
+### Word differences
+
+Inside a conflict, Mitos highlights the words that differ between two of its
+sections. It starts with what the current side changed from the original text
+when the conflict includes it, and otherwise with how the two sides differ.
+Text only in the original uses the theme's `diff.minus.word` style; text only in
+a side uses `diff.plus.word`.
+
+Run `:vcs-conflict-compare` with the cursor in a conflict to compare the next
+pair of sections: each side against the original, then the sides against each
+other. After the last pair the highlights are hidden, and the command starts
+over. The status line names the sections being compared.
+
+Set `editor.conflicts.word-diff` to `false` to keep the highlights hidden until
+`:vcs-conflict-compare` asks for them:
+
+```toml
+[editor.conflicts]
+word-diff = false
+```
+
+### Jujutsu conflicts
+
+Mitos also reads conflicts written by Jujutsu's `snapshot` marker style, which
+can have more than two sides:
+
+```text
+<<<<<<< conflict 1 of 1
++++++++ side #1
+first side
+------- base
+original text
++++++++ side #2
+second side
+>>>>>>> conflict 1 of 1 ends
+```
+
+**Current** is the first side and **incoming** the last one; keeping both keeps
+every side in order. Use `:vcs-conflict-resolve cursor` to keep any other
+section. Jujutsu's default `diff` style describes sides as changes rather than
+text, so Mitos leaves those conflicts for you to edit. To get snapshots, set
+`ui.conflict-marker-style = "snapshot"` in your Jujutsu configuration.
+`:vcs-conflict-source` reads Git's index and is unavailable for these conflicts.
 
 If Mitos cannot recognize a conflict, edit the file and remove the marker lines
 yourself.
@@ -549,7 +610,11 @@ Git repository, Jujutsu takes precedence.
   or title of its parent, or the number of parents it merges.
 - `:vcs-changes` lists the files changed by the working-copy commit. Jujutsu has
   no staging area, so every change is unstaged and new files appear as untracked.
-- Markers refresh when another `jj` command changes the working-copy commit.
+- Blame annotates the same parents. The `{commit}` placeholder shows the change ID,
+  and the details popup shows both the change ID and the commit ID, with their
+  shortest unique prefixes emphasized; its copy action copies the change ID.
+  `blame.ignoreRevsFile` does not apply.
+- Markers and blame refresh when another `jj` command changes the working-copy commit.
 - In a workspace that is also a Git repository, the worktree picker lists the other
   workspaces, which `jj` 0.47 and later colocate with a Git worktree. Creating a
   worktree adds a workspace, on top of the given bookmark or else of the parents of
@@ -557,6 +622,6 @@ Git repository, Jujutsu takes precedence.
   folder: its changes stay in its working-copy commit, but ignored files are deleted.
 
 Jujutsu support requires a [trusted workspace](./workspace-trust.md#jujutsu).
-Staging, stashes, branches, history, blame, and worktree locks remain Git
-commands: they work in a workspace that is also a Git repository and operate on
-the Git repository directly.
+Staging, stashes, branches, history, and worktree locks remain Git commands:
+they work in a workspace that is also a Git repository and operate on the Git
+repository directly.

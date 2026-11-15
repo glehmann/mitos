@@ -1,15 +1,18 @@
 //! A document-owned interpretation shared by conflict commands and presentation.
 
-use std::{ops::Range, sync::LazyLock};
+use std::{
+    ops::Range,
+    sync::{LazyLock, OnceLock},
+};
 
 use crate::{Document, ViewId};
 use editor_core::{
     highlight::{Highlight, OverlayHighlights},
-    ChangeSet, Rope, RopeSlice,
+    Assoc, ChangeSet, Rope, RopeSlice,
 };
 use stdx::rope::{Regex, RopeExt as _, RopeSliceExt as _};
 use text_layout::text_annotations::{InlineAnnotation, TextAnnotations};
-use vcs::conflict::{self, Conflict};
+use vcs::conflict::{self, Conflict, SectionKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConflictSide {
@@ -34,6 +37,12 @@ impl ConflictSide {
             _ => "ui.text.inactive",
         }
     }
+    /// Marker lines and their labels use one style when the theme has a marker scope.
+    fn marker_highlight(self, theme: &theme::Theme) -> Option<Highlight> {
+        theme
+            .find_highlight_exact("ui.virtual.conflict.marker")
+            .or_else(|| self.highlight(theme))
+    }
     fn highlight(self, theme: &theme::Theme) -> Option<Highlight> {
         theme
             .find_highlight_exact(self.scope())
@@ -44,16 +53,23 @@ impl ConflictSide {
 
 pub struct ConflictMarker {
     pub line: usize,
-    pub side: ConflictSide,
     /// Source character offsets, excluding the line ending.
     pub range: Range<usize>,
 }
 
 struct ConflictLineNumbers {
     lines: Range<usize>,
-    sections: [Range<usize>; 3],
+    sections: Vec<Range<usize>>,
     display_start: usize,
     removed_lines: usize,
+}
+
+/// Word-level differences between two sections, as character ranges.
+struct Differences {
+    removed: Vec<Range<usize>>,
+    added: Vec<Range<usize>>,
+    /// Neither of two sides is the original: both only add to the other.
+    sides: bool,
 }
 
 #[derive(Default)]
@@ -63,6 +79,10 @@ pub struct ConflictPresentation {
     pub error: Option<String>,
     line_numbers: Vec<ConflictLineNumbers>,
     labels: [Vec<InlineAnnotation>; 2],
+    /// Character range of each region.
+    extents: Vec<Range<usize>>,
+    /// Computed for each region when it first becomes visible.
+    differences: Vec<OnceLock<Option<Differences>>>,
 }
 
 // The parser validates line boundaries and suffixes. This deliberately broad
@@ -96,17 +116,13 @@ impl ConflictPresentation {
         let mut line_numbers = Vec::with_capacity(regions.len());
         let mut removed_lines = 0;
         for region in &regions {
-            let section_lines = |range: &Range<usize>| {
-                text.byte_to_line_idx(range.start, stdx::rope::LINE_TYPE)
-                    ..text.byte_to_line_idx(range.end, stdx::rope::LINE_TYPE)
-            };
-            let sections = [
-                section_lines(&region.current),
-                region.base.as_ref().map_or(0..0, section_lines),
-                section_lines(&region.incoming),
-            ];
-            let lines = text.byte_to_line_idx(region.whole.start, stdx::rope::LINE_TYPE)
-                ..text.byte_to_line_idx(region.markers.end.start, stdx::rope::LINE_TYPE) + 1;
+            let line = |byte| text.byte_to_line_idx(byte, stdx::rope::LINE_TYPE);
+            let sections: Vec<_> = region
+                .sections
+                .iter()
+                .map(|section| line(section.content.start)..line(section.content.end))
+                .collect();
+            let lines = line(region.whole.start)..line(region.closing.start) + 1;
             let display_start = lines.start - removed_lines;
             let longest = sections
                 .iter()
@@ -120,42 +136,81 @@ impl ConflictPresentation {
                 display_start,
                 removed_lines,
             });
-            let items = [
-                (Some(&region.markers.current), ConflictSide::Current),
-                (region.markers.base.as_ref(), ConflictSide::Base),
-                (Some(&region.markers.incoming), ConflictSide::Incoming),
-                (Some(&region.markers.end), ConflictSide::End),
-            ];
-            for (range, side) in items {
-                let Some(range) = range else {
-                    continue;
-                };
+            // Jujutsu describes each section on its own marker line.
+            let labeled = git_format(region);
+            let ranges = std::iter::once(&region.opening)
+                .chain(region.sections.iter().map(|section| &section.marker))
+                .chain([&region.closing]);
+            for range in ranges {
                 let start = text.byte_to_char_idx(range.start);
+                if markers
+                    .last()
+                    .is_some_and(|marker: &ConflictMarker| marker.range.start == start)
+                {
+                    continue;
+                }
                 let content = source[range.clone()].trim_end_matches(['\r', '\n']);
                 let range = start..start + content.chars().count();
-                match side {
-                    ConflictSide::Current => {
-                        labels[0].push(InlineAnnotation::new(range.end, " (Current Change)"))
-                    }
-                    ConflictSide::End => {
-                        labels[1].push(InlineAnnotation::new(range.end, " (Incoming Change)"))
-                    }
-                    _ => {}
+                if labeled && range.start == text.byte_to_char_idx(region.opening.start) {
+                    labels[0].push(InlineAnnotation::new(range.end, " (Current Change)"));
+                } else if labeled && range.start == text.byte_to_char_idx(region.closing.start) {
+                    labels[1].push(InlineAnnotation::new(range.end, " (Incoming Change)"));
                 }
                 markers.push(ConflictMarker {
                     line: text.char_to_line_idx(start),
-                    side,
                     range,
                 });
             }
         }
         Self {
+            extents: regions
+                .iter()
+                .map(|region| {
+                    text.byte_to_char_idx(region.whole.start)
+                        ..text.byte_to_char_idx(region.whole.end)
+                })
+                .collect(),
+            differences: regions.iter().map(|_| OnceLock::new()).collect(),
             regions,
             markers,
             error: None,
             line_numbers,
             labels,
         }
+    }
+
+    /// Character ranges of the conflicts, in document order. Language servers
+    /// read the markers as broken code, so diagnostics there are not shown.
+    pub fn extents(&self) -> &[Range<usize>] {
+        &self.extents
+    }
+
+    /// Differences for `comparison`, an index into [`Conflict::comparisons`].
+    /// A region keeps its first answer, so changing its comparison requires a
+    /// new presentation.
+    fn differences(&self, text: &Rope, region: usize, comparison: usize) -> Option<&Differences> {
+        self.differences[region]
+            .get_or_init(|| {
+                let conflict = &self.regions[region];
+                let &(left, right) = conflict.comparisons().get(comparison)?;
+                let (left, right) = (&conflict.sections[left], &conflict.sections[right]);
+                let (removed, added) =
+                    text_diff::refine(text, left.content.clone(), right.content.clone());
+                let chars = |ranges: Vec<Range<usize>>| {
+                    ranges
+                        .into_iter()
+                        .map(|range| {
+                            text.byte_to_char_idx(range.start)..text.byte_to_char_idx(range.end)
+                        })
+                        .collect()
+                };
+                Some(Differences {
+                    removed: chars(removed),
+                    added: chars(added),
+                    sides: left.kind == right.kind,
+                })
+            })
+            .as_ref()
     }
 
     /// Zero-based gutter number. Conflict sections share their first number;
@@ -191,6 +246,12 @@ impl ConflictPresentation {
                 .map_or(0, |region| region.removed_lines)
     }
 
+    pub fn is_marker_line(&self, line: usize) -> bool {
+        self.markers
+            .binary_search_by_key(&line, |marker| marker.line)
+            .is_ok()
+    }
+
     pub fn active(&self) -> bool {
         !self.regions.is_empty() || self.error.is_some()
     }
@@ -207,30 +268,61 @@ impl ConflictPresentation {
         if !region.whole.contains(&pos) {
             return None;
         }
+        let git = git_format(region);
+        if region.closing.contains(&pos) {
+            return git.then_some(ConflictSide::End);
+        }
+        let section = region
+            .sections
+            .iter()
+            .position(|section| section.marker.contains(&pos) || section.content.contains(&pos))?;
+        // Sides alternate between the two side colors.
+        let side = match region.sections[section].kind {
+            SectionKind::Base => ConflictSide::Base,
+            SectionKind::Side => {
+                let earlier = region.sections[..section]
+                    .iter()
+                    .filter(|section| section.kind == SectionKind::Side)
+                    .count();
+                if earlier % 2 == 0 {
+                    ConflictSide::Current
+                } else {
+                    ConflictSide::Incoming
+                }
+            }
+        };
         // In diff3, only the outer markers belong to the colored blocks.
-        if let Some(base) = &region.markers.base
-            && (base.contains(&pos) || region.markers.incoming.contains(&pos))
+        if git
+            && section > 0
+            && region.base().is_some()
+            && !region.sections[section].content.contains(&pos)
         {
             return None;
         }
-        if region.current.contains(&pos) || region.markers.current.contains(&pos) {
-            Some(ConflictSide::Current)
-        } else if region
-            .base
-            .as_ref()
-            .is_some_and(|range| range.contains(&pos))
-        {
-            Some(ConflictSide::Base)
-        } else if region.incoming.contains(&pos) || region.markers.incoming.contains(&pos) {
-            Some(ConflictSide::Incoming)
-        } else {
-            Some(ConflictSide::End)
-        }
+        Some(side)
     }
+}
+
+/// Whether the characters from `start` to `end` touch one of the ordered `extents`.
+pub fn overlaps(extents: &[Range<usize>], start: usize, end: usize) -> bool {
+    let index = extents.partition_point(|extent| extent.end <= start);
+    extents
+        .get(index)
+        .is_some_and(|extent| extent.start < end.max(start + 1))
+}
+
+/// Git introduces its first side with the opening marker.
+fn git_format(region: &Conflict) -> bool {
+    region.sections[0].marker == region.opening
 }
 
 impl Document {
     pub(crate) fn invalidate_conflicts(&mut self, before: &Rope, changes: &ChangeSet) {
+        // Conflicts keep their comparison while text before them changes.
+        self.conflict_comparisons = std::mem::take(&mut self.conflict_comparisons)
+            .into_iter()
+            .map(|(start, comparison)| (changes.map_pos(start, Assoc::After), comparison))
+            .collect();
         // An empty presentation has no positions to remap. Recheck only affected
         // lines, including joins and edits to marker suffixes or line endings.
         let keep_empty = self.conflicts.get().is_some_and(|model| {
@@ -263,6 +355,11 @@ impl Document {
                 }
             })
         })
+    }
+
+    /// The comparison of a conflict whose word differences were never cycled.
+    pub(crate) fn default_conflict_comparison(&self) -> Option<usize> {
+        self.config.load().conflicts.word_diff.then_some(0)
     }
 
     pub fn conflict_marker_line_number_hidden(&self, view: ViewId, line: usize) -> bool {
@@ -313,12 +410,63 @@ impl<'a> crate::document::PresentedDocument<'a> {
             .filter_map(|marker| {
                 let highlight = model
                     .side_at_line(self.text(), marker.line)
-                    .and_then(|side| side.highlight(theme))
+                    .and_then(|side| side.marker_highlight(theme))
+                    .or_else(|| theme.find_highlight_exact("ui.virtual.conflict.marker"))
                     .or_else(|| theme.find_highlight_exact("ui.text"))?;
                 Some((highlight, marker.range.clone()))
             })
             .collect();
         OverlayHighlights::Heterogenous { highlights }
+    }
+
+    /// Emphasize what the compared sections of each visible conflict do not share.
+    pub fn conflict_difference_highlights(
+        &self,
+        visible: Range<usize>,
+        theme: &theme::Theme,
+    ) -> Option<OverlayHighlights> {
+        let removed = theme
+            .find_highlight_exact("ui.virtual.conflict.removed")
+            .or_else(|| theme.find_highlight("diff.minus.word"))?;
+        let added = theme
+            .find_highlight_exact("ui.virtual.conflict.added")
+            .or_else(|| theme.find_highlight("diff.plus.word"))?;
+        let model = self.conflict_presentation();
+        let text = self.text();
+        let visible = text.char_to_byte_idx(visible.start)..text.char_to_byte_idx(visible.end);
+        let first = model
+            .regions
+            .partition_point(|region| region.whole.end <= visible.start);
+        let mut highlights = Vec::new();
+        for (index, region) in model.regions.iter().enumerate().skip(first) {
+            if region.whole.start >= visible.end {
+                break;
+            }
+            // A proposed text has no positions in common with the source's choices.
+            let default = self.source().default_conflict_comparison();
+            let comparison = if self.is_live() {
+                let start = text.byte_to_char_idx(region.whole.start);
+                let chosen = self.source().conflict_comparisons.get(&start);
+                chosen.copied().unwrap_or(default)
+            } else {
+                default
+            };
+            let Some(differences) =
+                comparison.and_then(|comparison| model.differences(text, index, comparison))
+            else {
+                continue;
+            };
+            let left = if differences.sides { added } else { removed };
+            highlights.extend(
+                differences
+                    .removed
+                    .iter()
+                    .map(|range| (left, range.clone())),
+            );
+            highlights.extend(differences.added.iter().map(|range| (added, range.clone())));
+        }
+        highlights.sort_unstable_by_key(|(_, range)| range.start);
+        (!highlights.is_empty()).then_some(OverlayHighlights::Heterogenous { highlights })
     }
 
     pub fn annotate_conflicts(
@@ -335,7 +483,7 @@ impl<'a> crate::document::PresentedDocument<'a> {
             .iter()
             .zip([ConflictSide::Current, ConflictSide::End])
         {
-            let highlight = theme.and_then(|theme| side.highlight(theme));
+            let highlight = theme.and_then(|theme| side.marker_highlight(theme));
             annotations.add_inline_annotations(labels, highlight);
         }
     }
@@ -509,7 +657,7 @@ mod tests {
                 let model = ConflictPresentation::new(&text);
                 assert!(model.error.is_none());
                 assert_eq!(model.regions.len(), 1);
-                assert!(model.regions[0].base.is_none());
+                assert!(model.regions[0].base().is_none());
                 assert_eq!(model.markers.len(), 3);
                 for (start, length) in [(2, current), (3 + current, incoming)] {
                     for offset in 0..length {
@@ -551,13 +699,14 @@ mod tests {
                 .collect::<Vec<_>>(),
             [1, 2, 4, 6]
         );
-        for marker in &model.markers {
+        let expected = [
+            (Some(" (Current Change)"), Some(ConflictSide::Current)),
+            (None, None),
+            (None, None),
+            (Some(" (Incoming Change)"), Some(ConflictSide::End)),
+        ];
+        for (marker, (label, side)) in model.markers.iter().zip(expected) {
             let source = text.slice_chars(marker.range.clone()).to_string();
-            let label = match marker.side {
-                ConflictSide::Current => Some(" (Current Change)"),
-                ConflictSide::End => Some(" (Incoming Change)"),
-                _ => None,
-            };
             let annotation = model
                 .labels
                 .iter()
@@ -566,14 +715,135 @@ mod tests {
             assert_eq!(annotation.map(|label| label.text.as_str()), label);
             assert!(!source.contains(['\r', '\n']));
             assert!(source.len() >= 8);
-            let side = match marker.side {
-                ConflictSide::Base | ConflictSide::Incoming => None,
-                side => Some(side),
-            };
             assert_eq!(model.side_at_line(&text, marker.line), side);
         }
         assert_eq!(model.side_at_line(&text, 5), Some(ConflictSide::Incoming));
         assert_eq!(model.side_at_line(&text, 0), None);
+    }
+
+    #[test]
+    fn jujutsu_sections_alternate_side_colors_and_share_line_numbers() {
+        let text = Rope::from(
+            [
+                "préfix",
+                "<<<<<<< conflict 1 of 1",
+                "+++++++ side #1",
+                "a",
+                "------- base #1",
+                "b",
+                "c",
+                "+++++++ side #2",
+                "------- base #2",
+                "d",
+                "+++++++ side #3",
+                "e",
+                ">>>>>>> conflict 1 of 1 ends",
+                "suffix",
+            ]
+            .join("\n"),
+        );
+        let model = ConflictPresentation::new(&text);
+        assert!(model.error.is_none());
+        assert!(model.labels.iter().all(|labels| labels.is_empty()));
+        assert_eq!(
+            model
+                .markers
+                .iter()
+                .map(|marker| marker.line)
+                .collect::<Vec<_>>(),
+            [1, 2, 4, 7, 8, 10, 12]
+        );
+        use ConflictSide::{Base, Current, Incoming};
+        let sides = [
+            None,
+            None,
+            Some(Current),
+            Some(Current),
+            Some(Base),
+            Some(Base),
+            Some(Base),
+            Some(Incoming),
+            Some(Base),
+            Some(Base),
+            Some(Current),
+            Some(Current),
+            None,
+            None,
+        ];
+        for (line, side) in sides.into_iter().enumerate() {
+            assert_eq!(model.side_at_line(&text, line), side, "line {line}");
+        }
+        for (physical, displayed) in [(0, 0), (3, 1), (5, 1), (6, 2), (9, 1), (11, 1), (13, 3)] {
+            assert_eq!(model.line_number(physical), displayed, "line {physical}");
+        }
+        assert_eq!(model.line_count(14), 4);
+    }
+
+    #[test]
+    fn word_differences_follow_the_chosen_comparison_across_edits() {
+        let theme = theme::Theme::from(
+            toml::from_str::<toml::Value>(
+                r##"
+            "diff.minus.word" = "#ff0000"
+            "diff.plus.word" = "#00ff00"
+        "##,
+            )
+            .unwrap(),
+        );
+        let removed = theme.find_highlight_exact("diff.minus.word").unwrap();
+        let added = theme.find_highlight_exact("diff.plus.word").unwrap();
+        let source = "préfix\n<<<<<<< a\nlet x = 1;\n||||||| base\nlet x = 0;\n=======\nlet y = 0;\n>>>>>>> b\n";
+        let mut doc = document(source);
+        let differences = |doc: &Document| {
+            let text = doc.text();
+            let highlights = crate::document::PresentedDocument::from(doc)
+                .conflict_difference_highlights(0..text.len_chars(), &theme);
+            let Some(OverlayHighlights::Heterogenous { highlights }) = highlights else {
+                return Vec::new();
+            };
+            highlights
+                .into_iter()
+                .map(|(highlight, range)| {
+                    let line = text.char_to_line_idx(range.start);
+                    (
+                        line,
+                        text.slice_chars(range).to_string(),
+                        highlight == added,
+                    )
+                })
+                .collect()
+        };
+        // By default, what the first side changed from the base.
+        assert_eq!(
+            differences(&doc),
+            [(2, "1".to_owned(), true), (4, "0".to_owned(), false)]
+        );
+        assert_ne!(removed, added);
+        // Two sides have no original: both are additions.
+        doc.conflict_comparisons.insert(7, Some(2));
+        doc.conflicts.take();
+        let sides = [
+            (2, "x".to_owned(), true),
+            (2, "1".to_owned(), true),
+            (6, "y".to_owned(), true),
+            (6, "0".to_owned(), true),
+        ];
+        assert_eq!(differences(&doc), sides);
+        edit(&mut doc, [(0, 0, Some("new\n".into()))].into_iter());
+        assert_eq!(doc.conflict_comparisons.get(&11), Some(&Some(2)));
+        assert_eq!(
+            differences(&doc),
+            sides.map(|(line, text, added)| (line + 1, text, added))
+        );
+        doc.conflict_comparisons.insert(11, None);
+        doc.conflicts.take();
+        assert!(differences(&doc).is_empty());
+        // Nothing outside the visible range is compared.
+        let model = doc.conflict_presentation();
+        assert!(model.differences[0].get().is_none());
+        assert!(crate::document::PresentedDocument::from(&doc)
+            .conflict_difference_highlights(0..3, &theme)
+            .is_none());
     }
 
     #[test]

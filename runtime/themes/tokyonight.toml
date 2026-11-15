@@ -7,6 +7,7 @@
 "ui.welcome.command" = { fg = "orange" }
 "variable.readonly" = { fg = "orange" }
 "variable.other.member.readonly" = { fg = "orange" }
+"variable.mutable" = { underline = { style = "line" } }
 
 "ui.picker.match" = { fg = "aqua" }
 "comment.error" = { fg = "error" }
@@ -73,6 +74,13 @@ variable = { fg = "fg" }
 "diff.delta.moved" = { fg = "blue" }
 "diff.minus" = { fg = "delete" }
 "diff.plus" = { fg = "add" }
+
+"ui.virtual.conflict.current" = { bg = "#092334" }
+"ui.virtual.conflict.base" = { bg = "#1e2025" }
+"ui.virtual.conflict.incoming" = { bg = "#142610" }
+"ui.virtual.conflict.marker" = { bg = "#1f242e" }
+"ui.virtual.conflict.removed" = { bg = "#662644" }
+"ui.virtual.conflict.added" = { bg = "#005572" }
 
 error = { fg = "error" }
 warning = { fg = "yellow" }

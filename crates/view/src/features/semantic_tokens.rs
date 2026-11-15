@@ -88,6 +88,17 @@ impl Document {
     pub fn semantic_tokens(&self) -> &[SemanticToken] {
         &self.semantic_tokens.cache
     }
+
+    /// Language servers read conflict markers as broken code, so their
+    /// classification of an unresolved conflict is dropped. Edits clear the
+    /// tokens, and so a resolved conflict is classified by the next response.
+    fn publish_semantic_tokens(&mut self, mut tokens: Vec<SemanticToken>) {
+        let conflicts = self.conflict_presentation().extents();
+        tokens.retain(|token| {
+            !crate::features::conflicts::overlaps(conflicts, token.range.start, token.range.end)
+        });
+        self.semantic_tokens.publish(tokens);
+    }
 }
 
 #[derive(Clone)]
@@ -203,8 +214,8 @@ fn request(editor: &mut Editor, doc_id: DocumentId, exited: Option<LanguageServe
                             })
                     })
                 {
-                    let state = &mut editor.document_mut(doc_id).unwrap().semantic_tokens;
-                    state.base = result
+                    let doc = editor.document_mut(doc_id).unwrap();
+                    doc.semantic_tokens.base = result
                         .filter(|result| supports_delta && result.result_id.is_some())
                         .map(|result| DeltaBase {
                             server: server_id,
@@ -212,7 +223,7 @@ fn request(editor: &mut Editor, doc_id: DocumentId, exited: Option<LanguageServe
                             legend,
                             result: Arc::new(result),
                         });
-                    state.publish(tokens);
+                    doc.publish_semantic_tokens(tokens);
                     editor.redraw().request();
                 }
             })
@@ -273,6 +284,8 @@ fn classification(
             "modification" => "modification",
             "documentation" => "documentation",
             "defaultLibrary" => "builtin",
+            // rust-analyzer's extension for `mut` bindings and their uses.
+            "mutable" => "mutable",
             _ => continue,
         };
         scope.push('.');
@@ -441,6 +454,22 @@ mod tests {
     }
 
     #[test]
+    fn mutable_bindings_are_classified_and_other_extensions_skipped() {
+        let legend = lsp::SemanticTokensLegend {
+            token_types: vec![lsp::SemanticTokenType::PARAMETER],
+            token_modifiers: ["declaration", "reference", "mutable"]
+                .map(lsp::SemanticTokenModifier::new)
+                .to_vec(),
+        };
+        let mut parameter = token(0, 1);
+        parameter.token_modifiers_bitset = 0b111;
+        assert_eq!(
+            classification(&parameter, &legend).unwrap(),
+            "variable.parameter.declaration.mutable"
+        );
+    }
+
+    #[test]
     fn invalid_indices_overlaps_and_columns_do_not_corrupt_following_tokens() {
         let text = Rope::from_str("foo bar baz");
         let mut unknown = token(0, 3);
@@ -465,6 +494,25 @@ mod tests {
             OffsetEncoding::Utf16
         )
         .is_empty());
+    }
+
+    #[test]
+    fn tokens_inside_unresolved_conflicts_are_dropped() {
+        let mut doc = Document::from(
+            Rope::from("fn a\n<<<<<<< x\nfn b\n=======\nfn c\n>>>>>>> y\nfn d\n"),
+            None,
+            std::sync::Arc::new(arc_swap::ArcSwap::from_pointee(
+                editor_config::Config::default(),
+            )),
+            std::sync::Arc::new(language::syntax::Loader::default()),
+        );
+        let token = |start: usize| SemanticToken {
+            range: start..start + 2,
+            scope: "keyword".into(),
+        };
+        let starts = [0, 5, 15, 28, 33, 43];
+        doc.publish_semantic_tokens(starts.map(token).to_vec());
+        assert_eq!(doc.semantic_tokens(), [token(0), token(43)]);
     }
 
     #[test]

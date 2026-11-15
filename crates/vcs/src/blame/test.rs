@@ -305,7 +305,7 @@ mod git {
         crate::git::test::exec_git_cmd(&["commit", "--allow-empty", "-m", "new HEAD"], repo.path());
         let new_head = FileBlame::try_refresh(file, true, Some(original.clone())).unwrap();
         assert!(!Arc::ptr_eq(&original, &new_head));
-        assert_ne!(original.source.revision, new_head.source.revision);
+        assert_ne!(original.source, new_head.source);
     }
 
     #[test]
@@ -384,6 +384,8 @@ mod formatting {
     fn bob() -> LineBlame {
         LineBlame {
             commit_id: "f14ab1cf00000000000000000000000000000000".into(),
+            change_id: None,
+            unique_prefixes: (0, 0),
             commit_hash: Some("f14ab1cf".to_owned()),
             author_name: Some("Bob TheBuilder".to_owned()),
             author_email: Some("bob@bob.com".to_owned()),

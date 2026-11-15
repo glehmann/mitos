@@ -278,6 +278,7 @@ impl Client {
                             "modification",
                             "documentation",
                             "defaultLibrary",
+                            "mutable",
                         ]
                         .into_iter()
                         .map(lsp::SemanticTokenModifier::new)

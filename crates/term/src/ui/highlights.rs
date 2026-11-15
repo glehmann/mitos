@@ -209,7 +209,16 @@ pub(crate) fn diagnostic_highlights(
         }
     };
 
+    let conflicts = doc.conflict_presentation().extents();
     for diagnostic in doc.diagnostics() {
+        // Language servers read conflict markers as broken code.
+        if view::features::conflicts::overlaps(
+            conflicts,
+            diagnostic.range.start,
+            diagnostic.range.end,
+        ) {
+            continue;
+        }
         // Spelling diagnostics use their own scope when the theme defines `diagnostic.spelling`;
         // otherwise they fall through to the severity-based styling (`diagnostic.hint`).
         if spelling.is_some() && matches!(diagnostic.provider, DiagnosticProvider::Spelling) {

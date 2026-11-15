@@ -639,6 +639,7 @@ impl View {
                 .cursor(doc.text().slice(..));
             text_annotations.add_line_annotation(InlineDiagnostics::new(
                 doc.diagnostics(),
+                doc.conflict_presentation().extents(),
                 cursor,
                 width,
                 doc.view_offset(self.id).horizontal_offset,

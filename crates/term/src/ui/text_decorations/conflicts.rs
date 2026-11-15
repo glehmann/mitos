@@ -13,28 +13,36 @@ pub fn side_style(theme: &Theme, side: ConflictSide) -> Style {
         .unwrap_or_else(|| theme.get(side.fallback()))
 }
 
-pub fn line_backgrounds<'a>(doc: PresentedDocument<'a>, theme: &'a Theme) -> impl Decoration + 'a {
+/// `rulers` are ascending screen columns whose own background is kept.
+pub fn line_backgrounds<'a>(
+    doc: PresentedDocument<'a>,
+    theme: &'a Theme,
+    rulers: Vec<u16>,
+) -> impl Decoration + 'a {
+    let marker = theme.try_get_exact("ui.virtual.conflict.marker");
     move |renderer: &mut super::TextRenderer, pos: crate::ui::document::LinePos| {
-        let Some(side) = doc
-            .conflict_presentation()
-            .side_at_line(doc.text(), pos.doc_line)
-        else {
-            return;
+        let conflicts = doc.conflict_presentation();
+        let background =
+            if let Some(marker) = marker.filter(|_| conflicts.is_marker_line(pos.doc_line)) {
+                marker.bg
+            } else if let Some(side) = conflicts.side_at_line(doc.text(), pos.doc_line) {
+                let style = side_style(theme, side);
+                style.bg.or_else(|| theme.tinted_background(style.fg))
+            } else {
+                return;
+            };
+        let style = Style {
+            bg: background,
+            ..Style::default()
         };
-        let style = side_style(theme, side);
-        let background = style.bg.or_else(|| theme.tinted_background(style.fg));
-        renderer.set_style(
-            Rect::new(
-                renderer.viewport.x,
-                pos.visual_line,
-                renderer.viewport.width,
-                1,
-            ),
-            Style {
-                bg: background,
-                ..Style::default()
-            },
-        );
+        let mut start = renderer.viewport.x;
+        for end in rulers.iter().copied().chain([renderer.viewport.right()]) {
+            renderer.set_style(
+                Rect::new(start, pos.visual_line, end.saturating_sub(start), 1),
+                style,
+            );
+            start = end + 1;
+        }
     }
 }
 
@@ -96,7 +104,7 @@ mod tests {
             let mut surface = tui::buffer::Buffer::empty(Rect::new(0, 0, 50, 15));
             surface.set_style(surface.area, theme.get("ui.background"));
             let mut decorations = super::super::DecorationManager::default();
-            decorations.add_decoration(line_backgrounds((&doc).into(), &theme));
+            decorations.add_decoration(line_backgrounds((&doc).into(), &theme, Vec::new()));
             crate::ui::document::render_document_with_styles(
                 &mut surface,
                 (&doc).into(),
@@ -124,7 +132,7 @@ mod tests {
                 assert_eq!(surface[(x, y + 3)].bg, Color::Rgb(48, 48, 16));
             }
             // Selection overlays must override the tint across the whole wide glyph.
-            let current = &doc.conflict_presentation().regions[0].current;
+            let current = &doc.conflict_presentation().regions[0].sections[0].content;
             let selected = editor_core::highlight::OverlayHighlights::single(
                 theme.find_highlight_exact("ui.selection").unwrap(),
                 doc.text().byte_to_char_idx(current.start)
@@ -133,7 +141,7 @@ mod tests {
             let mut surface = tui::buffer::Buffer::empty(surface.area);
             surface.set_style(surface.area, theme.get("ui.background"));
             let mut decorations = super::super::DecorationManager::default();
-            decorations.add_decoration(line_backgrounds((&doc).into(), &theme));
+            decorations.add_decoration(line_backgrounds((&doc).into(), &theme, Vec::new()));
             crate::ui::document::render_document_with_styles(
                 &mut surface,
                 (&doc).into(),
@@ -150,6 +158,62 @@ mod tests {
                 Color::Rgb(16, 32, 16)
             );
         }
+    }
+
+    #[test]
+    fn a_marker_scope_colors_every_marker_line() {
+        use std::sync::Arc;
+        let theme = Theme::from(
+            toml::from_str::<toml::Value>(
+                r##"
+            "ui.background" = { bg = "#101010" }
+            "ui.text" = "#ffffff"
+            "ui.virtual.conflict.current" = { bg = "#200000" }
+            "ui.virtual.conflict.marker" = { bg = "#000030" }
+        "##,
+            )
+            .unwrap(),
+        );
+        let doc = Document::from(
+            editor_core::Rope::from(
+                "<<<<<<< a\nours\n||||||| base\nold\n=======\ntheirs\n>>>>>>> b\n",
+            ),
+            None,
+            Arc::new(arc_swap::ArcSwap::from_pointee(
+                editor_config::Config::default(),
+            )),
+            Arc::new(language::syntax::Loader::default()),
+        );
+        let mut view = view::View::new(
+            doc.id(),
+            editor_config::GutterConfig {
+                layout: Vec::new(),
+                ..Default::default()
+            },
+            event::Redraw::default(),
+        );
+        view.area = Rect::new(0, 0, 40, 9);
+        let mut doc = doc;
+        doc.ensure_view_init(view.id);
+        let layout = view.layout(&doc, Some(&theme));
+        let mut surface = tui::buffer::Buffer::empty(Rect::new(0, 0, 40, 9));
+        surface.set_style(surface.area, theme.get("ui.background"));
+        let mut decorations = super::super::DecorationManager::default();
+        decorations.add_decoration(line_backgrounds((&doc).into(), &theme, Vec::new()));
+        crate::ui::document::render_document_with_styles(
+            &mut surface,
+            (&doc).into(),
+            &layout,
+            Vec::new(),
+            &theme,
+            decorations,
+            std::iter::empty(),
+        );
+        let (x, y) = (layout.viewport.x + 20, layout.viewport.y);
+        for line in [0, 2, 4, 6] {
+            assert_eq!(surface[(x, y + line)].bg, Color::Rgb(0, 0, 48), "{line}");
+        }
+        assert_eq!(surface[(x, y + 1)].bg, Color::Rgb(32, 0, 0));
     }
 
     #[test]
