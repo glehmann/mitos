@@ -2850,3 +2850,65 @@ fn native_fetch_for_pull_preserves_non_utf8_tracking_names() -> Result<()> {
     assert_eq!(refs(native.path())?, refs(oracle.path())?);
     Ok(())
 }
+
+#[cfg(feature = "jj")]
+#[tokio::test]
+async fn jujutsu_repositories_create_and_forget_workspaces() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let root = stdx::path::canonicalize_existing(dir.path()).join("repo");
+    let jj = |args: &[&str]| {
+        std::process::Command::new("jj")
+            .current_dir(&root)
+            .args(args)
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8(output.stdout).unwrap())
+    };
+    // Not every machine running the tests has a Jujutsu recent enough to colocate workspaces.
+    std::fs::create_dir(&root)?;
+    if jj(&["git", "init", "--colocate"]).is_none()
+        || !jj(&["workspace", "add", "--help"]).is_some_and(|help| help.contains("--colocate"))
+    {
+        return Ok(());
+    }
+    std::fs::write(root.join("file.txt"), "initial\n")?;
+    jj(&["commit", "--message", "initial"]).unwrap();
+    jj(&["bookmark", "create", "topic", "--revision", "@-"]).unwrap();
+    let repo = GitRepository::discover(&root)?;
+    let workspaces = || jj(&["workspace", "list", "--template", r#"root ++ "\n""#]).unwrap();
+
+    let path = root.with_file_name("topic");
+    execute(
+        &repo,
+        RepositoryOperation::CreateWorktree {
+            path: path.clone(),
+            branch: Some("topic".into()),
+        },
+    )
+    .await?;
+    assert!(workspaces().contains(path.to_str().unwrap()));
+    assert!(repo.worktrees().await?.iter().any(|tree| tree.path == path));
+    assert_eq!(std::fs::read_to_string(path.join("file.txt"))?, "initial\n");
+
+    std::fs::write(path.join("new.txt"), "unrecorded\n")?;
+    execute(
+        &repo,
+        RepositoryOperation::RemoveWorktree { path: path.clone() },
+    )
+    .await?;
+    assert!(!path.exists());
+    assert!(!workspaces().contains(path.to_str().unwrap()));
+    assert_eq!(repo.worktrees().await?.len(), 1);
+    // The unrecorded file was snapshotted into the forgotten working-copy commit.
+    let log = jj(&[
+        "log",
+        "--no-graph",
+        "--revisions",
+        r#"files("new.txt")"#,
+        "--template",
+        "change_id",
+    ]);
+    assert!(!log.unwrap().is_empty());
+    Ok(())
+}

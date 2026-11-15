@@ -51,6 +51,60 @@ fn jj(root: &Path) -> Command {
     command
 }
 
+/// Unlike [`jj`], records operations.
+fn jj_mut(root: &Path) -> Command {
+    let mut command = Command::new("jj");
+    command.current_dir(root).stdin(Stdio::null()).args([
+        "--color",
+        "never",
+        "--no-pager",
+        "--quiet",
+    ]);
+    command
+}
+
+/// Adds a workspace at `path`, on `bookmark` or else on the parents of the current
+/// working-copy commit, with a Git worktree so that Git lists it too.
+pub(crate) fn add_workspace(root: &Path, path: &Path, bookmark: Option<&str>) -> Result<()> {
+    let mut command = jj_mut(root);
+    command.args(["workspace", "add", "--colocate"]);
+    if let Some(bookmark) = bookmark {
+        // A quoted revset symbol, with the same escapes as Rust.
+        command.args(["--revision", &format!("{bookmark:?}")]);
+    }
+    run(command.arg("--").arg(path)).map(drop)
+}
+
+/// Forgets the workspace at `path`, which also unregisters its Git worktree, and deletes its
+/// directory. Its changes are snapshotted first, so they stay in its working-copy commit.
+/// Returns `false` when `path` is not a workspace of this repository.
+pub(crate) fn remove_workspace(root: &Path, path: &Path) -> Result<bool> {
+    let list = run(jj_mut(root).args([
+        "workspace",
+        "list",
+        "--template",
+        r#"stringify(name) ++ "\0" ++ root ++ "\0""#,
+    ]))?;
+    let fields: Vec<_> = list.split(|byte| *byte == 0).collect();
+    let Some(name) = fields.chunks_exact(2).find_map(|entry| {
+        let root = std::str::from_utf8(entry[1]).ok()?;
+        (stdx::path::canonicalize_existing(Path::new(root)) == path)
+            .then(|| std::str::from_utf8(entry[0]).ok())
+            .flatten()
+    }) else {
+        return Ok(false);
+    };
+    let available = path.join(".jj").is_dir();
+    if available {
+        run(jj_mut(path).args(["util", "snapshot"]))?;
+    }
+    run(jj_mut(root).args(["workspace", "forget", "--", name]))?;
+    if available {
+        std::fs::remove_dir_all(path)?;
+    }
+    Ok(true)
+}
+
 fn run(command: &mut Command) -> Result<Vec<u8>> {
     let output = command.output().context("failed to run `jj`")?;
     ensure!(

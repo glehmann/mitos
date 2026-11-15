@@ -161,6 +161,10 @@ impl PreparedOperation {
             {
                 return Ok(None);
             }
+            #[cfg(feature = "jj")]
+            if self.jujutsu_workspace()? {
+                return Ok(None);
+            }
             if let Operation::Repository(operation) = &self.operation
                 && operation.requires_git_hooks(&self.repository)?
             {

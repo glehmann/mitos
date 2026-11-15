@@ -287,6 +287,11 @@ pub struct Divergence {
     pub behind: usize,
 }
 
+/// Whether removing the worktree at `path` forgets a Jujutsu workspace.
+pub fn is_jujutsu_workspace(path: &Path) -> bool {
+    cfg!(feature = "jj") && path.join(".jj").is_dir()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Worktree {
     pub path: PathBuf,
@@ -788,6 +793,34 @@ impl PreparedOperation {
             Err(error) => return Err(error.into()),
         }
         Ok(())
+    }
+
+    /// In a Jujutsu repository, creates and removes workspaces rather than Git worktrees
+    /// that Jujutsu would not know. Returns `false` when Git should run the operation.
+    #[cfg(feature = "jj")]
+    pub(super) fn jujutsu_workspace(&self) -> Result<bool> {
+        let root = &self.repository.root;
+        if !is_jujutsu_workspace(root) {
+            return Ok(false);
+        }
+        match &self.operation {
+            Operation::Repository(RepositoryOperation::CreateWorktree { path, branch }) => {
+                self.ensure_current()?;
+                crate::jj::add_workspace(root, path, branch.as_deref())?;
+                Ok(true)
+            }
+            Operation::Repository(RepositoryOperation::RemoveWorktree { path }) => {
+                let repo = self.repository.open_read(true)?;
+                let target = prepare_worktree_removal(&repo, path)?;
+                ensure!(
+                    !target.repository()?.git_dir().join("locked").try_exists()?,
+                    "Unlock the worktree before removing it"
+                );
+                self.ensure_current()?;
+                crate::jj::remove_workspace(root, path)
+            }
+            _ => Ok(false),
+        }
     }
 
     pub(super) fn set_worktree_lock(&self, path: &Path, locked: bool) -> Result<()> {

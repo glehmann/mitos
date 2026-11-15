@@ -550,7 +550,13 @@ Git repository, Jujutsu takes precedence.
 - `:vcs-changes` lists the files changed by the working-copy commit. Jujutsu has
   no staging area, so every change is unstaged and new files appear as untracked.
 - Markers refresh when another `jj` command changes the working-copy commit.
+- In a workspace that is also a Git repository, the worktree picker lists the other
+  workspaces, which `jj` 0.47 and later colocate with a Git worktree. Creating a
+  worktree adds a workspace, on top of the given bookmark or else of the parents of
+  the working-copy commit. Removing one forgets the workspace and deletes its
+  folder: its changes stay in its working-copy commit, but ignored files are deleted.
 
 Jujutsu support requires a [trusted workspace](./workspace-trust.md#jujutsu).
-Staging, stashes, branches, history, and blame remain Git commands: they work in
-a workspace that is also a Git repository and operate on the Git repository directly.
+Staging, stashes, branches, history, blame, and worktree locks remain Git
+commands: they work in a workspace that is also a Git repository and operate on
+the Git repository directly.
