@@ -139,6 +139,21 @@
 (changelog
   "%changelog" @type.definition)
 
+(changelog_entry
+  ["*" "-"] @markup.list.unnumbered)
+
+(changelog_entry
+  date: (date) @constant)
+
+(changelog_entry
+  author: (author) @label)
+
+(changelog_entry
+  email: (email) @markup.link.url)
+
+(changelog_entry
+  version: (evr) @constant.numeric)
+
 (macro_definition
   "%" @punctuation.special
   ["define" "global"] @constant.builtin

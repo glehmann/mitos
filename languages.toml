@@ -4590,7 +4590,7 @@ comment-token = "#"
 
 [[grammar]]
 name = "rpmspec"
-source = { git = "https://gitlab.com/cryptomilk/tree-sitter-rpmspec", rev = "ea82a3995d079055fa08133319a1f22aa68c5b4d", subpath = "rpmspec" }
+source = { git = "https://gitlab.com/gleh/tree-sitter-rpmspec", rev = "ddf213e119feb64a00a4cb4a4d25e1eb35a1541d", subpath = "rpmspec" }
 
 [[language]]
 name = "pkgbuild"
